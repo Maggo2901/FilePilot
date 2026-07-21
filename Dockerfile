@@ -6,7 +6,7 @@ COPY . .
 RUN npm run build
 
 FROM node:22-alpine
-RUN apk add --no-cache su-exec tini
+RUN apk add --no-cache ffmpeg su-exec tini
 WORKDIR /app
 COPY package*.json .npmrc ./
 RUN npm ci --omit=dev && npm cache clean --force

@@ -783,7 +783,8 @@ function Modal({children,close,wide=false}:{children:React.ReactNode;close:()=>v
 }
 
 const IMAGE_EXTENSIONS=['jpg','jpeg','jpe','jfif','png','gif','webp','bmp','avif','svg','ico'];
-const VIDEO_EXTENSIONS=['mp4','webm','mov','m4v','ogv'];
+const DIRECT_VIDEO_EXTENSIONS=['mp4','webm','mov','m4v','ogv'];
+const VIDEO_EXTENSIONS=[...DIRECT_VIDEO_EXTENSIONS,'mkv','avi','wmv','flv','mpeg','mpg','ts','m2ts'];
 const AUDIO_EXTENSIONS=['mp3','wav','ogg','flac','m4a','opus','aac'];
 const TEXT_EXTENSIONS=['txt','md','markdown','log','nfo','json','jsonl','xml','yaml','yml','csv','tsv','ini','conf','config','env','properties','toml','sql','js','jsx','ts','tsx','css','scss','less','html','htm','sh','bash','zsh','ps1','bat','cmd','py','java','c','cc','cpp','h','hpp','cs','go','rs','php','rb','vue','svelte'];
 const OFFICE_EXTENSIONS=['doc','docx','xls','xlsx','xlsm','ppt','pptx','odt','ods','odp'];
@@ -795,12 +796,26 @@ function Preview({item}:{item:FileItem}){
   const canOpenInTab=(IMAGE_EXTENSIONS.includes(extension)&&extension!=='svg')||VIDEO_EXTENSIONS.includes(extension)||AUDIO_EXTENSIONS.includes(extension)||extension==='pdf';
   let content:React.ReactNode;
   if(IMAGE_EXTENSIONS.includes(extension))content=<ImagePreview item={item}/>;
-  else if(VIDEO_EXTENSIONS.includes(extension))content=<video className="preview" src={source} controls autoPlay={false}/>;
+  else if(VIDEO_EXTENSIONS.includes(extension))content=<VideoPreview item={item} preferDirect={DIRECT_VIDEO_EXTENSIONS.includes(extension)}/>;
   else if(AUDIO_EXTENSIONS.includes(extension))content=<audio className="audioPreview" src={source} controls/>;
   else if(extension==='pdf')content=<iframe className="previewFrame" src={source} title={item.name}/>;
   else if(TEXT_EXTENSIONS.includes(extension)||(!extension&&item.size<=1024*1024))content=<TextPreview item={item}/>;
   else content=<div className="noPreview"><FilePlus2/><strong>{OFFICE_EXTENSIONS.includes(extension)?'Office-Datei erkannt':'Keine Browser-Vorschau verfügbar'}</strong><p>{OFFICE_EXTENSIONS.includes(extension)?'Word-, Excel- und PowerPoint-Dateien werden mit der auf deinem Computer installierten Standard-App geöffnet. Lade die Datei dafür herunter.':'Dieses Format kann der Browser nicht sicher direkt darstellen. Du kannst die Datei herunterladen und mit deiner Standard-App öffnen.'}</p><a className="primaryButton" href={downloadSource}><Download/>Herunterladen und öffnen</a></div>;
   return <div className="previewShell"><div className="previewActions"><span><FileText/>Vorschau · {formatSize(item.size)}</span><div>{canOpenInTab&&<a className="secondaryButton" href={source} target="_blank" rel="noreferrer"><ExternalLink/>Neuer Tab</a>}<a className="secondaryButton" href={downloadSource}><Download/>Herunterladen</a></div></div><div className="previewBody">{content}</div></div>;
+}
+
+function VideoPreview({item,preferDirect}:{item:FileItem;preferDirect:boolean}){
+  const directSource=`/api/raw?path=${encodeURIComponent(item.path)}`;
+  const convertedSource=`/api/media-stream?path=${encodeURIComponent(item.path)}`;
+  const[converted,setConverted]=useState(!preferDirect);
+  const[error,setError]=useState('');
+  useEffect(()=>{setConverted(!preferDirect);setError('')},[item.path,preferDirect]);
+  const source=converted?convertedSource:directSource;
+  if(error)return <div className="textPreviewState" role="alert"><FilePlus2/><strong>Video konnte nicht wiedergegeben werden</strong><span>{error}</span><small>Die Originaldatei kann weiterhin heruntergeladen werden.</small></div>;
+  return <div className="videoPreview"><video key={source} className="preview" src={source} controls playsInline preload="metadata" onError={()=>{
+    if(!converted){setConverted(true);return}
+    setError('Die Live-Konvertierung konnte nicht gestartet werden. Bitte prüfe die Server-Logs und ob FFmpeg installiert ist.');
+  }}/>{converted&&<small><LoaderCircle/>Live-Konvertierung für den Browser · Das erste Starten kann einige Sekunden dauern</small>}</div>;
 }
 
 function ImagePreview({item}:{item:FileItem}){

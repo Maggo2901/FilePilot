@@ -119,6 +119,8 @@ if (IS_PRODUCTION) {
 }
 const MAX_UPLOAD = Number(process.env.MAX_UPLOAD_MB || 10240) * 1024 * 1024;
 const ENV_TRASH_ENABLED = process.env.TRASH_ENABLED !== 'false';
+const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+const TRANSCODE_PRESET = /^[a-z0-9-]+$/i.test(process.env.TRANSCODE_PRESET || '') ? String(process.env.TRANSCODE_PRESET) : 'veryfast';
 const ENV_FILE_ROOT = process.env.FILE_ROOT ? path.resolve(process.env.FILE_ROOT) : '';
 const SETTINGS_FILE = path.join(APP_DATA, 'settings.json');
 const AUTH_FILE = path.join(APP_DATA, 'auth.json');
@@ -1405,6 +1407,58 @@ app.get('/api/raw', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.get('/api/media-stream',async(req,res,next)=>{
+  try{
+    const resolved=await resolveVirtual(String(req.query.path||''));
+    const stat=await fs.lstat(resolved.fullPath);
+    if(!stat.isFile()||stat.isSymbolicLink())throw new Error('Nur reguläre Videodateien können wiedergegeben werden');
+    const media=await probeMedia(resolved.fullPath);
+    if(!media?.streams?.some((stream:any)=>stream.type==='video'))throw new Error('In dieser Datei wurde keine Videospur gefunden');
+
+    const child=spawn(FFMPEG_PATH,[
+      '-hide_banner','-loglevel','error','-nostdin',
+      '-i',resolved.fullPath,
+      '-map','0:v:0','-map','0:a:0?',
+      '-sn','-dn',
+      '-c:v','libx264','-preset',TRANSCODE_PRESET,'-crf','23','-pix_fmt','yuv420p',
+      '-c:a','aac','-b:a','192k','-ac','2',
+      '-movflags','frag_keyframe+empty_moov+default_base_moof',
+      '-f','mp4','pipe:1'
+    ],{windowsHide:true,stdio:['ignore','pipe','pipe']});
+    let stderr='';
+    let wroteData=false;
+    let settled=false;
+    const stop=()=>{if(!settled&&!child.killed)child.kill('SIGKILL')};
+    res.on('close',stop);
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data',(chunk:string)=>{if(stderr.length<16_000)stderr+=chunk});
+    child.stdout.on('data',chunk=>{
+      if(!wroteData){
+        wroteData=true;
+        res.status(200);
+        res.setHeader('Content-Type','video/mp4');
+        res.setHeader('Cache-Control','no-store');
+        res.setHeader('X-Accel-Buffering','no');
+      }
+      if(!res.write(chunk))child.stdout.pause();
+    });
+    res.on('drain',()=>child.stdout.resume());
+    child.on('error',error=>{
+      settled=true;
+      if(!res.headersSent)res.status(503).json({error:`Medienkonvertierung ist nicht verfügbar: ${error.message}`});
+      else res.destroy(error);
+    });
+    child.on('close',code=>{
+      settled=true;
+      if(res.writableEnded||res.destroyed)return;
+      if(code===0&&wroteData){res.end();return}
+      const detail=stderr.trim().split('\n').slice(-2).join(' ').slice(0,600);
+      if(!res.headersSent)res.status(422).json({error:`Video konnte nicht konvertiert werden${detail?`: ${detail}`:''}`});
+      else res.destroy();
+    });
+  }catch(error){next(error)}
 });
 
 const TEXT_PREVIEW_LIMIT = 1024 * 1024;

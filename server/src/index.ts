@@ -718,6 +718,33 @@ async function moveProgress(source:string,destination:string,stats:TransferStats
   }
 }
 
+async function removeRecursiveProgress(target:string,onBytes:(amount:number)=>void,onItem:()=>void):Promise<void>{
+  let stat;
+  try{stat=await fs.lstat(target)}catch(error:any){if(error?.code==='ENOENT')return;throw error}
+  if(stat.isDirectory()&&!stat.isSymbolicLink()){
+    for(const name of await fs.readdir(target))await removeRecursiveProgress(path.join(target,name),onBytes,onItem);
+    try{await fs.rmdir(target)}catch(error:any){if(error?.code!=='ENOENT')throw error}
+    onItem();
+    return;
+  }
+  try{await fs.unlink(target)}catch(error:any){if(error?.code!=='ENOENT')throw error}
+  onBytes(stat.size);
+  onItem();
+}
+
+async function deleteStats(target:string):Promise<{bytes:number;items:number}>{
+  const stat=await fs.lstat(target);
+  if(!stat.isDirectory()||stat.isSymbolicLink())return{bytes:stat.size,items:1};
+  let bytes=0;
+  let items=1;
+  for(const name of await fs.readdir(target)){
+    const child=await deleteStats(path.join(target,name));
+    bytes+=child.bytes;
+    items+=child.items;
+  }
+  return{bytes,items};
+}
+
 async function dirSize(target: string): Promise<number> {
   const stat = await fs.lstat(target);
   if (stat.isSymbolicLink()) return 0;
@@ -1257,6 +1284,88 @@ app.post('/api/delete', async (req, res, next) => {
     res.json({ ok: true, trashed: settings.trashEnabled });
   } catch (error) {
     next(error);
+  }
+});
+
+app.post('/api/delete-stream',async(req,res)=>{
+  res.status(200);
+  res.setHeader('Content-Type','application/x-ndjson; charset=utf-8');
+  res.setHeader('Cache-Control','no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering','no');
+  res.flushHeaders();
+  const send=(payload:Record<string,unknown>)=>{if(!res.writableEnded&&!res.destroyed)res.write(`${JSON.stringify(payload)}\n`)};
+  const requestedPaths=Array.isArray(req.body?.paths)?[...new Set<string>(req.body.paths.map(String))]:[];
+  try{
+    if(!requestedPaths.length)throw new Error('Keine Dateien ausgewählt');
+    const settings=await getSettings();
+    if(settings.trashEnabled)await fs.mkdir(TRASH_DIR,{recursive:true});
+    send({type:'preparing',trashed:settings.trashEnabled,count:requestedPaths.length});
+
+    const plans=[] as Array<{source:ResolvedPath;stats:{bytes:number;items:number}}>;
+    const skipped:string[]=[];
+    let total=0;
+    let totalFiles=0;
+    for(const virtualPath of requestedPaths){
+      try{
+        const source=await resolveVirtual(virtualPath);
+        assertWritable(source);
+        assertNotLocationRoot(source);
+        const stats=await deleteStats(source.fullPath);
+        total+=stats.bytes;
+        totalFiles+=stats.items;
+        plans.push({source,stats});
+      }catch(error:any){
+        if(error?.code==='ENOENT'){skipped.push(virtualPath);continue}
+        throw error;
+      }
+    }
+
+    let loaded=0;
+    let completedFiles=0;
+    let current='';
+    let lastProgressAt=0;
+    const startedAt=Date.now();
+    const progress=(force=false)=>{
+      const now=Date.now();
+      if(!force&&now-lastProgressAt<100)return;
+      lastProgressAt=now;
+      const elapsedSeconds=Math.max(.001,(now-startedAt)/1000);
+      const fraction=total>0?loaded/total:totalFiles>0?completedFiles/totalFiles:1;
+      const rate=total>0?loaded/elapsedSeconds:completedFiles/elapsedSeconds;
+      const remaining=total>0?total-loaded:totalFiles-completedFiles;
+      send({type:'progress',trashed:settings.trashEnabled,loaded,total,completedFiles,totalFiles,current,percent:Math.max(0,Math.min(100,Math.round(fraction*100))),speed:total>0?rate:0,etaSeconds:rate>0&&remaining>0?remaining/rate:0});
+    };
+    send({type:'start',trashed:settings.trashEnabled,total,totalFiles,count:plans.length,skipped:skipped.length});
+
+    for(const plan of plans){
+      current=path.basename(plan.source.fullPath);
+      progress(true);
+      const addBytes=(amount:number)=>{loaded+=amount;progress(false)};
+      const finishItem=()=>{completedFiles+=1;progress(true)};
+      if(settings.trashEnabled){
+        const locationTrash=path.join(TRASH_DIR,plan.source.location.id);
+        await fs.mkdir(locationTrash,{recursive:true});
+        const deletedAt=new Date().toISOString();
+        const stamp=deletedAt.replace(/[:.]/g,'-');
+        const destination=path.join(locationTrash,`${stamp}__${crypto.randomUUID()}__${path.basename(plan.source.fullPath)}`);
+        const metadata:TrashMetadata={deletedAt,originalPath:plan.source.virtualPath,originalParent:path.posix.dirname(plan.source.virtualPath),originalName:path.basename(plan.source.fullPath),locationId:plan.source.location.id};
+        await moveProgress(plan.source.fullPath,destination,{bytes:plan.stats.bytes,files:plan.stats.items},addBytes,finishItem);
+        await writePrivateJson(`${destination}.trashinfo.json`,metadata).catch(error=>console.error('Papierkorb-Metadaten konnten nicht gespeichert werden',error));
+      }else{
+        await removeRecursiveProgress(plan.source.fullPath,addBytes,finishItem);
+      }
+    }
+    loaded=total;
+    completedFiles=totalFiles;
+    progress(true);
+    const durationMs=Date.now()-startedAt;
+    await recordHistory({action:'delete',status:'success',title:settings.trashEnabled?'In Papierkorb verschoben':'Endgültig gelöscht',detail:`${plans.length} Element(e)${skipped.length?`, ${skipped.length} bereits entfernt`:''}`,count:plans.length,paths:requestedPaths,sourcePaths:requestedPaths,destination:settings.trashEnabled?'FilePilot-Papierkorb':undefined,bytes:total,durationMs});
+    send({type:'result',ok:true,trashed:settings.trashEnabled,loaded,total,totalFiles,skipped:skipped.length,durationMs});
+    res.end();
+  }catch(error:any){
+    await recordHistory({action:'delete',status:'error',title:'Löschen fehlgeschlagen',detail:`${requestedPaths.length} Element(e)`,count:requestedPaths.length,paths:requestedPaths,sourcePaths:requestedPaths,error:error?.message||'Löschen fehlgeschlagen'});
+    send({type:'error',error:error?.message||'Löschen fehlgeschlagen'});
+    res.end();
   }
 });
 

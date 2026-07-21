@@ -5,7 +5,7 @@ import {formatSize} from '../lib/api';
 export type TransferTask={
   id:string;
   name:string;
-  mode:'copy'|'move';
+  mode:'copy'|'move'|'delete';
   loaded:number;
   total:number;
   completedFiles:number;
@@ -28,6 +28,8 @@ function duration(value:number){
   return`${hours} Std. ${minutes%60} Min.`;
 }
 
+function modeLabel(mode:TransferTask['mode']){return mode==='copy'?'KOPIEREN':mode==='move'?'VERSCHIEBEN':'LÖSCHEN'}
+
 export function TransferCenter({tasks,onDismiss,onClearCompleted}:{tasks:TransferTask[];onDismiss:(id:string)=>void;onClearCompleted:()=>void}){
   const[expanded,setExpanded]=useState(true);
   if(!tasks.length)return null;
@@ -42,8 +44,8 @@ export function TransferCenter({tasks,onDismiss,onClearCompleted}:{tasks:Transfe
   return <aside className="transferCenter" aria-label="Kopier- und Verschiebefortschritt" aria-live="polite">
     <header><div><span aria-hidden="true">🚀</span><div><strong>Dateiübertragungen</strong><small>{active.length?`${active.length} aktiv`:'Alle Vorgänge abgeschlossen'}</small></div></div><div className="transferHeaderActions">{completed>0&&<button className="transferClear" onClick={onClearCompleted} title="Alle abgeschlossenen und fehlgeschlagenen Einträge ausblenden"><Trash2/><span>Fertige löschen</span></button>}<button onClick={()=>setExpanded(false)} title="Fortschritt einklappen" aria-label="Fortschritt einklappen"><ChevronUp/></button></div></header>
     <div className="transferList">{tasks.map(task=><article key={task.id} className={`transferTask ${task.status}`}>
-      <div className="transferTaskState" aria-hidden="true">{task.status==='done'?<CheckCircle2/>:task.status==='error'?<CircleX/>:<span>{task.mode==='copy'?'📄':'✂️'}</span>}</div>
-      <div className="transferTaskBody"><div className="transferTaskTitle"><span className={`transferMode ${task.mode}`}>{task.mode==='copy'?'KOPIEREN':'VERSCHIEBEN'}</span><strong title={task.name}>{task.name}</strong><b>{task.status==='done'?'100%':task.status==='error'?'Fehler':task.status==='preparing'?'…':`${task.percent}%`}</b></div>
+      <div className="transferTaskState" aria-hidden="true">{task.status==='done'?<CheckCircle2/>:task.status==='error'?<CircleX/>:task.mode==='delete'?<Trash2/>:<span>{task.mode==='copy'?'📄':'✂️'}</span>}</div>
+      <div className="transferTaskBody"><div className="transferTaskTitle"><span className={`transferMode ${task.mode}`}>{modeLabel(task.mode)}</span><strong title={task.name}>{task.name}</strong><b>{task.status==='done'?'100%':task.status==='error'?'Fehler':task.status==='preparing'?'…':`${task.percent}%`}</b></div>
         <div className="transferBar" role="progressbar" aria-label={`${task.name}: ${task.percent} Prozent`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={task.percent}><i style={{transform:`scaleX(${task.percent/100})`}}/></div>
         {task.status==='error'?<p>{task.error}</p>:<div className="transferMeta"><span><Gauge/>{task.speed?`${formatSize(task.speed)}/s`:'wird berechnet'}</span><span><Clock3/>{task.status==='done'?'Abgeschlossen':duration(task.etaSeconds)}</span><span>{task.total?`${formatSize(task.loaded)} von ${formatSize(task.total)}`:`${task.completedFiles} Dateien`}</span></div>}
         {task.current&&task.status!=='done'&&<small className="transferCurrent" title={task.current}>{task.current}</small>}

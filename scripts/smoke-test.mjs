@@ -134,11 +134,12 @@ try {
   assert(Array.isArray(emptyHistory.items) && emptyHistory.items.length === 0, 'Aktivitätsverlauf war nach dem Löschen nicht leer');
 
   const trashHeaders = {'content-type': 'application/json', authorization: `Bearer ${loginData.token}`};
-  const moveToTrash = await fetch(`${base}/delete`, {
+  const moveToTrash = await fetch(`${base}/delete-stream`, {
     method: 'POST', headers: trashHeaders,
-    body: JSON.stringify({paths: ['/@/manual-smoke/Quelle/trash-restore-test.txt', '/@/manual-smoke/Quelle/trash-remove-test.txt']})
+    body: JSON.stringify({paths: ['/@/manual-smoke/Quelle/trash-restore-test.txt', '/@/manual-smoke/Quelle/trash-remove-test.txt', '/@/manual-smoke/Quelle/bereits-entfernt.txt']})
   });
-  assert(moveToTrash.ok && (await moveToTrash.json()).trashed === true, 'Dateien wurden nicht in den FilePilot-Papierkorb verschoben');
+  const deleteEvents = (await moveToTrash.text()).trim().split('\n').map(line => JSON.parse(line));
+  assert(moveToTrash.ok && deleteEvents.some(event => event.type === 'progress') && deleteEvents.some(event => event.type === 'result' && event.trashed === true && event.skipped === 1), 'Dateien wurden nicht mit Fortschritt in den FilePilot-Papierkorb verschoben');
   const sourceAfterTrash = await fetch(`${base}/list?path=${encodeURIComponent('/@/manual-smoke/Quelle')}`, {headers: {authorization: `Bearer ${loginData.token}`}}).then(response => response.json());
   assert(!sourceAfterTrash.items?.some(item => item.name.startsWith('trash-')), 'Gelöschte Dateien sind im Ursprungsordner sichtbar geblieben');
   const trashItems = await fetch(`${base}/trash`, {headers: {authorization: `Bearer ${loginData.token}`}}).then(response => response.json());

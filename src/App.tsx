@@ -56,6 +56,7 @@ type ContextMenuItem={label:string;Icon:LucideIcon;action:()=>void;disabled?:boo
 type ContextMenuState={x:number;y:number;label:string;items:ContextMenuItem[]};
 type FileClipboard={paths:string[];mode:'copy'|'move'};
 type TransferStreamEvent={type:'preparing'|'start'|'progress'|'result'|'error';mode?:'copy'|'move';error?:string;loaded?:number;total?:number;completedFiles?:number;totalFiles?:number;current?:string;percent?:number;speed?:number;etaSeconds?:number};
+type DeleteStreamEvent={type:'preparing'|'start'|'progress'|'result'|'error';error?:string;loaded?:number;total?:number;completedFiles?:number;totalFiles?:number;current?:string;percent?:number;speed?:number;etaSeconds?:number;skipped?:number};
 type WorkspaceTab={id:string;path:string;selected:string[];viewMode:AppSettings['viewMode']};
 
 function workspaceTab(path:string,viewMode:AppSettings['viewMode']):WorkspaceTab{return{id:randomUUID(),path,selected:[],viewMode}}
@@ -86,6 +87,34 @@ async function streamedTransfer(paths:string[],destination:string,mode:'copy'|'m
   }
   consume(buffer);
   if(!completed)throw new Error('Die Übertragung wurde unerwartet beendet');
+}
+
+async function streamedDelete(paths:string[],onEvent:(event:DeleteStreamEvent)=>void){
+  const response=await fetch('/api/delete-stream',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({paths})});
+  if(response.status===401){localStorage.removeItem('filepilot-token');location.reload();throw new Error('Sitzung abgelaufen')}
+  if(!response.ok)throw new Error(`Löschen fehlgeschlagen (${response.status})`);
+  if(!response.body)throw new Error('Der Browser unterstützt keine Live-Fortschrittsanzeige');
+  const reader=response.body.getReader();
+  const decoder=new TextDecoder();
+  let buffer='';
+  let completed=false;
+  const consume=(line:string)=>{
+    if(!line.trim())return;
+    const event=JSON.parse(line) as DeleteStreamEvent;
+    if(event.type==='error')throw new Error(event.error||'Löschen fehlgeschlagen');
+    if(event.type==='result')completed=true;
+    onEvent(event);
+  };
+  while(true){
+    const{done,value}=await reader.read();
+    buffer+=decoder.decode(value,{stream:!done});
+    const lines=buffer.split('\n');
+    buffer=lines.pop()||'';
+    for(const line of lines)consume(line);
+    if(done)break;
+  }
+  consume(buffer);
+  if(!completed)throw new Error('Der Löschvorgang wurde unerwartet beendet');
 }
 
 export default function App(){
@@ -138,6 +167,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   const uploadDestinationRef=useRef<string|null>(null);
   const uploadRequests=useRef(new Map<string,XMLHttpRequest>());
   const uploadProgressAt=useRef(new Map<string,number>());
+  const deletingPaths=useRef(new Set<string>());
   const[uploads,setUploads]=useState<UploadTask[]>([]);
   const[transfers,setTransfers]=useState<TransferTask[]>([]);
   const[contextMenu,setContextMenu]=useState<ContextMenuState|null>(null);
@@ -377,7 +407,42 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   async function deleteSelected(paths=selected){
     if(!paths.length)return notify('Bitte zuerst Dateien oder Ordner auswählen');
     const proceed=!settings.confirmDelete||await confirmAction(settings.trashEnabled?{title:'In den Papierkorb verschieben?',message:`${paths.length} Element(e) werden aus dem aktuellen Ordner entfernt.`,detail:'Du kannst sie anschließend im FilePilot-Papierkorb wiederherstellen oder endgültig löschen.',confirmLabel:'In Papierkorb',danger:true}:{title:'Endgültig löschen?',message:`${paths.length} Element(e) werden unwiderruflich gelöscht.`,detail:'Diese Aktion kann nicht rückgängig gemacht werden.',confirmLabel:'Endgültig löschen',danger:true});
-    if(proceed)void run(()=>api('/delete',{method:'POST',body:JSON.stringify({paths})}),settings.trashEnabled?'In den Papierkorb verschoben':'Endgültig gelöscht');
+    if(!proceed)return;
+    if(paths.some(pathValue=>deletingPaths.current.has(pathValue)))return notify('Diese Auswahl wird bereits gelöscht');
+    paths.forEach(pathValue=>deletingPaths.current.add(pathValue));
+    const id=randomUUID();
+    const firstName=decodeURIComponent(paths[0].split('/').filter(Boolean).pop()||'Auswahl');
+    const name=paths.length===1?firstName:`${firstName} + ${paths.length-1} weitere`;
+    const task:TransferTask={id,name,mode:'delete',loaded:0,total:0,completedFiles:0,totalFiles:0,percent:0,speed:0,etaSeconds:0,status:'preparing'};
+    setTransfers(currentTasks=>[task,...currentTasks]);
+    try{
+      let skipped=0;
+      await streamedDelete(paths,event=>{
+        skipped=event.skipped??skipped;
+        setTransfers(currentTasks=>currentTasks.map(currentTask=>currentTask.id===id?{
+          ...currentTask,
+          status:event.type==='result'?'done':event.type==='progress'?'transferring':currentTask.status,
+          loaded:event.loaded??currentTask.loaded,
+          total:event.total??currentTask.total,
+          completedFiles:event.completedFiles??currentTask.completedFiles,
+          totalFiles:event.totalFiles??currentTask.totalFiles,
+          current:event.current??currentTask.current,
+          percent:event.type==='result'?100:event.percent??currentTask.percent,
+          speed:event.speed??currentTask.speed,
+          etaSeconds:event.type==='result'?0:event.etaSeconds??currentTask.etaSeconds
+        }:currentTask));
+      });
+      setSelected([]);
+      notify(skipped?`${skipped} bereits entfernte Element(e) übersprungen`:settings.trashEnabled?'In den Papierkorb verschoben':'Endgültig gelöscht');
+      refresh();
+    }catch(error:any){
+      const message=error?.message||'Löschen fehlgeschlagen';
+      setTransfers(currentTasks=>currentTasks.map(currentTask=>currentTask.id===id?{...currentTask,status:'error',error:message}:currentTask));
+      notify(`Fehler: ${message}`);
+      refresh();
+    }finally{
+      paths.forEach(pathValue=>deletingPaths.current.delete(pathValue));
+    }
   }
 
   useEffect(()=>{

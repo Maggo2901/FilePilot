@@ -1,0 +1,31 @@
+services:
+  filepilot:
+    build: .
+    container_name: filepilot
+    ports:
+      - "${FILEPILOT_PORT:-8080}:8080"
+    environment:
+      PUID: "${PUID:-99}"
+      PGID: "${PGID:-100}"
+      UMASK: "${UMASK:-0000}"
+      APP_PASSWORD: "${APP_PASSWORD:?APP_PASSWORD muss in der .env gesetzt werden}"
+      TOKEN_SECRET: "${TOKEN_SECRET:?TOKEN_SECRET muss in der .env gesetzt werden}"
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-10240}"
+      TRASH_ENABLED: "${TRASH_ENABLED:-true}"
+      FILE_ROOT: "/data"
+      APP_DATA: "/config"
+      FILEPILOT_DOCKER: "true"
+    volumes:
+      # Alle Unraid User-Shares werden automatisch unter „Unraid – alle Shares“ angezeigt.
+      - /mnt/user:/data:rw
+      # Einstellungen, eigenes Passwort und Papierkorb.
+      - /mnt/user/appdata/filepilot:/config:rw
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3

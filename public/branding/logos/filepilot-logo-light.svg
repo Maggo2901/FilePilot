@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="FilePilot – Dateimanager">
+
+<defs>
+  <linearGradient id="folderGrad" x1="0" y1="0" x2="0.85" y2="1">
+    <stop offset="0" stop-color="#60A5FA"/>
+    <stop offset="0.42" stop-color="#3B82F6"/>
+    <stop offset="1" stop-color="#1D4ED8"/>
+  </linearGradient>
+  <linearGradient id="arrowGrad" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0" stop-color="#BFDBFE"/>
+    <stop offset="0.45" stop-color="#60A5FA"/>
+    <stop offset="1" stop-color="#2563EB"/>
+  </linearGradient>
+  <filter id="softGlow" x="-30%" y="-30%" width="160%" height="160%">
+    <feGaussianBlur stdDeviation="10" result="blur"/>
+    <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter>
+</defs>
+<g transform="translate(16 -95) scale(.72)" color="#0B1735">
+<g>
+  <path d="M74 148c0-24 20-44 44-44h104l40 42h132c24 0 44 20 44 44v194c0 24-20 44-44 44H118c-24 0-44-20-44-44V148z" fill="url(#folderGrad)"/>
+  <path d="M105 127h106l39 40h144c13 0 23 10 23 23" fill="none" stroke="#93C5FD" stroke-width="9" stroke-linecap="round" opacity="0.75"/>
+  <circle cx="272" cy="297" r="109" fill="#0B0F1A" stroke="#2563EB" stroke-width="17"/>
+  <path d="M272 168v23M272 403v23M143 297h23M378 297h23" stroke="#3B82F6" stroke-width="14" stroke-linecap="round"/>
+  <path d="M218 361L327 220l-31 99-78 42z" fill="url(#arrowGrad)"/>
+  <path d="M218 361l30-79 48 37z" fill="#1D4ED8"/>
+  <path d="M327 220l-31 99-21-39z" fill="#DBEAFE" opacity="0.9"/>
+</g></g>
+<text x="395" y="144" fill="#0B1735" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="102" font-weight="750" letter-spacing="-3">FilePilot</text>
+<text x="402" y="207" fill="#516B9A" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="37" font-weight="450">Dateien. Klar auf Kurs.</text>
+</svg>

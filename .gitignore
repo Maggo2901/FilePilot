@@ -1,0 +1,24 @@
+node_modules
+dist
+server/dist
+.env
+*.log
+*.tsbuildinfo
+data/*
+!data/.gitkeep
+
+.filepilot
+generated-agents
+.agents
+.codex
+.e2e
+FilePilot-Branding-Pack-v1.0
+
+# Local editor, OS and secret files
+.DS_Store
+Thumbs.db
+.idea
+.vscode
+*.local
+*.pem
+*.key

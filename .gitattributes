@@ -1,0 +1,23 @@
+* text=auto
+
+# Linux executes these files inside the container and CI environment.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Keep source and metadata deterministic across Windows and Linux.
+*.json text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.svg text eol=lf
+*.xml text eol=lf
+*.webmanifest text eol=lf
+
+# Binary branding assets must never be line-ending normalized.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary

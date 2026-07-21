@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="FilePilot – Dateimanager">
+
+<g transform="translate(16 -95) scale(.72)" color="#FFFFFF"><g fill="currentColor"><path d="M74 148c0-24 20-44 44-44h104l40 42h132c24 0 44 20 44 44v194c0 24-20 44-44 44H118c-24 0-44-20-44-44V148z"/><circle cx="272" cy="297" r="109" fill="none" stroke="currentColor" stroke-width="17"/><path d="M218 361L327 220l-31 99-78 42z"/></g></g>
+<text x="395" y="144" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="102" font-weight="750" letter-spacing="-3">FilePilot</text>
+<text x="402" y="207" fill="#FFFFFF" font-family="Inter, Segoe UI, Arial, sans-serif" font-size="37" font-weight="450">Dateien. Klar auf Kurs.</text>
+</svg>

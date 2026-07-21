@@ -1,0 +1,12 @@
+{
+  "name": "FilePilot – Dateien klar auf Kurs",
+  "short_name": "FilePilot",
+  "description": "Moderner Dateimanager für Unraid, Docker und Windows.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080d16",
+  "theme_color": "#111b2c",
+  "icons": [
+    {"src":"/app-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}

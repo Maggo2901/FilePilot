@@ -1,0 +1,13 @@
+/* FilePilot Brand Tokens */
+:root {
+  --fp-midnight: #0B0F1A;
+  --fp-surface: #121827;
+  --fp-surface-alt: #1A1F33;
+  --fp-primary: #2563EB;
+  --fp-primary-light: #3B82F6;
+  --fp-accent: #60A5FA;
+  --fp-accent-light: #93C5FD;
+  --fp-text-muted: #CBD5E1;
+  --fp-white: #F8FAFC;
+  --fp-logo-gradient: linear-gradient(145deg, #60A5FA 0%, #3B82F6 45%, #1D4ED8 100%);
+}

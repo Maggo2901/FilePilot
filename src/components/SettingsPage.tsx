@@ -24,6 +24,7 @@ import {
   X
 } from 'lucide-react';
 import {api,AppSettings,Bootstrap,formatSize,Location,ManualLocation,token} from '../lib/api';
+import {randomUUID} from '../lib/id';
 
 type Props={
   bootstrap:Bootstrap;
@@ -84,7 +85,7 @@ export function SettingsPage({bootstrap,onSaved,notify}:Props){
 
   function addManual(){
     const rootPath=bootstrap.platform==='win32'?'C:\\Users\\Admin\\Documents':'/data/Media';
-    patch('manualLocations',[...settings.manualLocations,{id:`manual-${crypto.randomUUID()}`,name:'Neuer Speicherort',rootPath,readOnly:false,enabled:true}]);
+    patch('manualLocations',[...settings.manualLocations,{id:`manual-${randomUUID()}`,name:'Neuer Speicherort',rootPath,readOnly:false,enabled:true}]);
   }
 
   function removeManual(id:string){

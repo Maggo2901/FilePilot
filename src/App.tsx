@@ -39,6 +39,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import {api,AppSettings,Bootstrap,FileItem,formatSize,Location,token} from './lib/api';
+import {randomUUID} from './lib/id';
 import {Login} from './components/Login';
 import {FilePane,PaneHandle} from './components/FilePane';
 import {SettingsPage} from './components/SettingsPage';
@@ -57,7 +58,7 @@ type FileClipboard={paths:string[];mode:'copy'|'move'};
 type TransferStreamEvent={type:'preparing'|'start'|'progress'|'result'|'error';mode?:'copy'|'move';error?:string;loaded?:number;total?:number;completedFiles?:number;totalFiles?:number;current?:string;percent?:number;speed?:number;etaSeconds?:number};
 type WorkspaceTab={id:string;path:string;selected:string[];viewMode:AppSettings['viewMode']};
 
-function workspaceTab(path:string,viewMode:AppSettings['viewMode']):WorkspaceTab{return{id:crypto.randomUUID(),path,selected:[],viewMode}}
+function workspaceTab(path:string,viewMode:AppSettings['viewMode']):WorkspaceTab{return{id:randomUUID(),path,selected:[],viewMode}}
 
 async function streamedTransfer(paths:string[],destination:string,mode:'copy'|'move',onEvent:(event:TransferStreamEvent)=>void){
   const response=await fetch('/api/transfer-stream',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({paths,destination,mode})});
@@ -215,7 +216,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     const forcedCopy=mode==='move'&&mustCopyAcrossStorage(paths,dest);
     const effectiveMode=forcedCopy?'copy':mode;
     if(forcedCopy)notify('Sicherheitsmodus: Zwischen verschiedenen Speicherorten wird immer kopiert');
-    const id=crypto.randomUUID();
+    const id=randomUUID();
     const firstName=decodeURIComponent(paths[0].split('/').pop()||'Auswahl');
     const destinationName=favoriteLabel(dest,bootstrap.locations);
     const name=`${firstName}${paths.length>1?` + ${paths.length-1} weitere`:''} → ${destinationName}`;
@@ -287,7 +288,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     const uploadLocation=locationForPath(uploadDestination,bootstrap.locations);
     if(uploadDestination==='/'||uploadLocation?.readOnly)return notify('Dieser Speicherort ist nicht beschreibbar');
     const selectedFiles=[...files];
-    const id=crypto.randomUUID();
+    const id=randomUUID();
     const total=selectedFiles.reduce((sum,file)=>sum+file.size,0);
     const name=selectedFiles.length===1?selectedFiles[0].name:`${selectedFiles[0].name} + ${selectedFiles.length-1} weitere`;
     const form=new FormData();

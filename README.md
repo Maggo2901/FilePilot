@@ -59,7 +59,6 @@ Unter **Environment variables** mindestens diese Werte anlegen:
 | `FILEPILOT_PORT` | `8080` | Port im lokalen Netzwerk |
 | `MAX_UPLOAD_MB` | `10240` | maximales Upload-Limit in MB |
 | `TRASH_ENABLED` | `true` | internen FilePilot-Papierkorb verwenden |
-| `TRANSCODE_PRESET` | `veryfast` | CPU-/Qualitätsprofil für browserfremde Videos; `ultrafast` entlastet schwächere NAS-Systeme |
 
 Ein Secret lässt sich auf einem vertrauenswürdigen Rechner erzeugen:
 

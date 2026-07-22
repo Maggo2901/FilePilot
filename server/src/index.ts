@@ -1495,16 +1495,37 @@ app.get('/api/download', async (req, res, next) => {
     await recordHistory({action:'download',status:'success',title:preservePaths?'ZIP-Sammlung heruntergeladen':'Auswahl heruntergeladen',detail:`${resolved.length} Element(e)`,count:resolved.length,paths:virtualPaths,sourcePaths:virtualPaths,destination:'Browser-Download'});
 
     if (!preservePaths && resolved.length === 1 && (await fs.stat(resolved[0].fullPath)).isFile()) return res.download(resolved[0].fullPath);
+    const archiveItems=await Promise.all(resolved.map(async item=>{
+      const stat=await fs.stat(item.fullPath);
+      const locationName=item.location.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').trim().replace(/[. ]+$/,'')||item.location.id;
+      const relativePath=path.relative(item.location.rootPath,item.fullPath).split(path.sep).filter(Boolean).join('/');
+      return{...item,stat,archivePath:preservePaths?`${locationName}/${relativePath}`:path.basename(item.fullPath)};
+    }));
     res.attachment(preservePaths?'FilePilot-Sammlung.zip':'FilePilot-Auswahl.zip');
     const zip = new ZipArchive({ zlib: { level: 6 } });
     zip.on('error', next);
     zip.pipe(res);
-    for (const item of resolved) {
-      const stat = await fs.stat(item.fullPath);
-      const locationName=item.location.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').trim().replace(/[. ]+$/,'')||item.location.id;
-      const relativePath=path.relative(item.location.rootPath,item.fullPath).split(path.sep).filter(Boolean).join('/');
-      const archivePath=preservePaths?`${locationName}/${relativePath}`:path.basename(item.fullPath);
-      stat.isDirectory() ? zip.directory(item.fullPath, archivePath) : zip.file(item.fullPath, { name: archivePath });
+    const manifest=[
+      'FilePilot – Inhaltsverzeichnis',
+      '==============================',
+      `Erstellt: ${new Date().toLocaleString('de-DE',{dateStyle:'full',timeStyle:'long'})}`,
+      `Ausgewählte Elemente: ${archiveItems.length}`,
+      '',
+      'Die folgenden Pfade zeigen, woher die heruntergeladenen Elemente in FilePilot stammen.',
+      'Absolute Systempfade werden aus Sicherheitsgründen nicht aufgeführt.',
+      '',
+      ...archiveItems.flatMap((item,index)=>[
+        `${index+1}. ${item.stat.isDirectory()?'[ORDNER]':'[DATEI]'} ${path.basename(item.fullPath)}`,
+        `   Speicherort: ${item.location.name}`,
+        `   Ursprünglicher Pfad: ${item.virtualPath}`,
+        `   Pfad im ZIP: ${item.archivePath}`,
+        ...(item.stat.isFile()?[`   Größe: ${item.stat.size.toLocaleString('de-DE')} Bytes`]:[]),
+        ''
+      ])
+    ].join('\r\n');
+    zip.append(`\ufeff${manifest}`,{name:'FilePilot-Inhaltsverzeichnis.txt',store:true});
+    for (const item of archiveItems) {
+      item.stat.isDirectory() ? zip.directory(item.fullPath, item.archivePath) : zip.file(item.fullPath, { name: item.archivePath });
     }
     await zip.finalize();
   } catch (error) {

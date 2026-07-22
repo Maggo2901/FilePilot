@@ -114,6 +114,7 @@ try {
   assert(collectionDownload.ok,`ZIP-Sammlung lieferte Status ${collectionDownload.status}: ${collectionZip.slice(0,300)}`);
   assert(collectionDownload.headers.get('content-disposition')?.includes('FilePilot-Sammlung.zip'),`ZIP-Sammlung hatte einen unerwarteten Dateinamen: ${collectionDownload.headers.get('content-disposition')}`);
   assert(collectionZip.includes('Smoke-Test/Fotos/Urlaub/strand.jpg')&&collectionZip.includes('Smoke-Test/Dokumente/Archiv/notes.txt'),'ZIP-Sammlung erhielt die Ordnerstruktur verschiedener Auswahlen nicht');
+  assert(collectionZip.includes('FilePilot-Inhaltsverzeichnis.txt')&&collectionPaths.every(sourcePath=>collectionZip.includes(sourcePath)),'ZIP-Sammlung enthielt kein Inhaltsverzeichnis mit den Ursprungspfaden');
 
   const transferStream = await fetch(`${base}/transfer-stream`, {
     method: 'POST',

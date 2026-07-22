@@ -177,6 +177,7 @@ type StoredSettings = {
   viewMode: 'list' | 'grid';
   accent: 'blue' | 'green' | 'purple' | 'orange';
   paneCount: 1 | 2 | 3 | 4;
+  rememberWorkspace: boolean;
   defaultLeftLocationId: string;
   defaultRightLocationId: string;
   disabledAutoLocationIds: string[];
@@ -208,6 +209,7 @@ const DEFAULT_SETTINGS: StoredSettings = {
   viewMode: 'list',
   accent: 'blue',
   paneCount: 2,
+  rememberWorkspace: true,
   defaultLeftLocationId: '',
   defaultRightLocationId: '',
   disabledAutoLocationIds: [],
@@ -412,6 +414,7 @@ function normalizeStoredSettings(input: Partial<StoredSettings> = {}): StoredSet
     viewMode: input.viewMode === 'grid' ? 'grid' : 'list',
     accent: ['blue', 'green', 'purple', 'orange'].includes(String(input.accent)) ? input.accent as StoredSettings['accent'] : 'blue',
     paneCount: [1, 2, 3, 4].includes(Number(input.paneCount)) ? Number(input.paneCount) as StoredSettings['paneCount'] : 2,
+    rememberWorkspace: input.rememberWorkspace !== false,
     defaultLeftLocationId: startChoice(input.defaultLeftLocationId),
     defaultRightLocationId: startChoice(input.defaultRightLocationId),
     disabledAutoLocationIds: Array.isArray(input.disabledAutoLocationIds) ? input.disabledAutoLocationIds.map(String).slice(0, 100) : [],
@@ -1374,15 +1377,52 @@ app.post('/api/upload', upload.array('files'), async (req, res, next) => {
   try {
     const destination = await resolveVirtual(String(req.body?.destination || ''));
     assertWritable(destination);
+    const safeRelativePath=(value:unknown)=>{
+      const segments=String(value||'').replace(/\\/g,'/').split('/').filter(Boolean);
+      if(!segments.length||segments.some(segment=>segment==='.'||segment==='..'))throw new Error('Ungültiger Upload-Pfad');
+      return segments.map(validateFileName).join(path.sep);
+    };
+    let relativePaths:unknown[]=[];
+    let directories:unknown[]=[];
+    try{
+      relativePaths=JSON.parse(String(req.body?.relativePaths||'[]'));
+      directories=JSON.parse(String(req.body?.directories||'[]'));
+    }catch{throw new Error('Ungültige Upload-Ordnerstruktur')}
+    if(!Array.isArray(relativePaths)||!Array.isArray(directories))throw new Error('Ungültige Upload-Ordnerstruktur');
+    const ensureUploadDirectory=async(relative:string)=>{
+      let current=destination.fullPath;
+      for(const segment of relative.split(path.sep).filter(Boolean)){
+        current=path.join(current,segment);
+        try{
+          const stat=await fs.lstat(current);
+          if(stat.isSymbolicLink()||!stat.isDirectory())throw new Error(`Upload-Ziel „${segment}“ ist kein sicherer Ordner`);
+        }catch(error:any){
+          if(error?.code!=='ENOENT')throw error;
+          try{await fs.mkdir(current)}catch(createError:any){
+            if(createError?.code!=='EEXIST')throw createError;
+            const stat=await fs.lstat(current);
+            if(stat.isSymbolicLink()||!stat.isDirectory())throw new Error(`Upload-Ziel „${segment}“ ist kein sicherer Ordner`);
+          }
+        }
+      }
+    };
+    for(const directory of directories){
+      const relative=safeRelativePath(directory);
+      await ensureUploadDirectory(relative);
+    }
     const uploaded:string[]=[];
-    for (const file of (req.files as Express.Multer.File[] || [])) {
-      const safeOriginalName = validateFileName(path.basename(file.originalname));
-      const target = await uniquePath(path.join(destination.fullPath, safeOriginalName));
+    const files=req.files as Express.Multer.File[]||[];
+    for (let index=0;index<files.length;index+=1) {
+      const file=files[index];
+      const relative=safeRelativePath(relativePaths[index]||file.originalname);
+      const parent=path.dirname(relative);
+      if(parent!=='.')await ensureUploadDirectory(parent);
+      const target=await uniquePath(path.join(destination.fullPath,relative));
       await moveAcrossDevices(file.path, target);
       uploaded.push(virtualFromFull(destination.location,target));
     }
-    await recordHistory({action:'upload',status:'success',title:'Dateien hochgeladen',detail:`${uploaded.length} Datei(en) → ${destination.location.name}`,count:uploaded.length,paths:uploaded,resultPaths:uploaded,destination:destination.virtualPath});
-    res.json({ ok: true });
+    await recordHistory({action:'upload',status:'success',title:'Dateien hochgeladen',detail:`${uploaded.length} Datei(en)${directories.length?`, ${directories.length} Ordner`:''} → ${destination.location.name}`,count:uploaded.length,paths:uploaded,resultPaths:uploaded,destination:destination.virtualPath});
+    res.json({ok:true,files:uploaded.length,directories:directories.length});
   } catch (error) {
     for (const file of (req.files as Express.Multer.File[] || [])) await fs.rm(file.path, { force: true }).catch(() => undefined);
     next(error);

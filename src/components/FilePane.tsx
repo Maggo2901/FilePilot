@@ -1,5 +1,5 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
-import {CalendarClock,CheckSquare2,ChevronRight,FileText,FolderOpen,FolderSearch,HardDrive,Home,LayoutGrid,List,LoaderCircle,LockKeyhole,RefreshCw,Ruler,Search,Server,TriangleAlert,X} from 'lucide-react';
+import {CalendarClock,CheckSquare2,ChevronRight,FileText,FolderOpen,FolderSearch,HardDrive,Home,LayoutGrid,List,LoaderCircle,LockKeyhole,RefreshCw,Ruler,Search,Server,TriangleAlert,UploadCloud,X} from 'lucide-react';
 import {api,AppSettings,displayFileName,FileItem,formatSize,Location,token} from '../lib/api';
 import {FileEmoji} from './FileIcon';
 
@@ -100,6 +100,8 @@ export function FilePane({title,path,setPath,selected,setSelected,viewMode,onVie
   const[searchMeta,setSearchMeta]=useState({scanned:0,truncated:false});
   const[searchProgress,setSearchProgress]=useState<SearchProgress>({phase:'preparing',discovered:0,scanned:0,total:0,found:0,percent:0});
   const[searchRevision,setSearchRevision]=useState(0);
+  const[externalDrag,setExternalDrag]=useState(false);
+  const externalDragDepth=useRef(0);
 
   async function load(){
     const sequence=++loadSequence.current;
@@ -232,10 +234,27 @@ export function FilePane({title,path,setPath,selected,setSelected,viewMode,onVie
 
   function receiveDrop(event:React.DragEvent){
     event.preventDefault();
+    externalDragDepth.current=0;
+    setExternalDrag(false);
     try{
       const paths=JSON.parse(event.dataTransfer.getData('application/filepilot')||'[]');
-      if(Array.isArray(paths)&&paths.length)window.dispatchEvent(new CustomEvent('filepilot-drop',{detail:{paths,destination:path}}));
+      if(Array.isArray(paths)&&paths.length){window.dispatchEvent(new CustomEvent('filepilot-drop',{detail:{paths,destination:path}}));return}
     }catch{/* ignore foreign drag data */}
+    if(event.dataTransfer.types.includes('Files'))window.dispatchEvent(new CustomEvent('filepilot-upload-drop',{detail:{dataTransfer:event.dataTransfer,destination:path}}));
+  }
+
+  function dragEnter(event:React.DragEvent){
+    if(event.dataTransfer.types.includes('application/filepilot')||!event.dataTransfer.types.includes('Files'))return;
+    event.preventDefault();
+    externalDragDepth.current+=1;
+    setExternalDrag(true);
+  }
+
+  function dragLeave(event:React.DragEvent){
+    if(!externalDrag)return;
+    event.preventDefault();
+    externalDragDepth.current=Math.max(0,externalDragDepth.current-1);
+    if(!externalDragDepth.current)setExternalDrag(false);
   }
 
   function showContextMenu(event:React.MouseEvent,item?:FileItem){
@@ -266,7 +285,8 @@ export function FilePane({title,path,setPath,selected,setSelected,viewMode,onVie
     {!loading&&!searching&&!error&&!shown.length&&<div className="gridEmpty">{deepSearch?<Search size={40}/>:<FolderOpen size={40}/>}<span>{deepSearch?'Keine passenden Treffer':'Dieser Ordner ist leer'}</span>{deepSearch&&<small>Wähle einen anderen Filter oder Suchbegriff.</small>}</div>}
   </div>;
 
-  return <section className={`pane ${settings.compactRows?'compact':''}`} aria-busy={loading} aria-label={`${title}: ${location?.name||'Speicherorte'}`} onContextMenu={event=>showContextMenu(event)} onDragOver={event=>event.preventDefault()} onDrop={receiveDrop}>
+  return <section className={`pane ${settings.compactRows?'compact':''} ${externalDrag?'externalDropActive':''}`} aria-busy={loading} aria-label={`${title}: ${location?.name||'Speicherorte'}`} onContextMenu={event=>showContextMenu(event)} onDragEnter={dragEnter} onDragLeave={dragLeave} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect=event.dataTransfer.types.includes('application/filepilot')?'move':'copy'}} onDrop={receiveDrop}>
+    {externalDrag&&<div className="externalDropOverlay" role="status"><UploadCloud/><strong>Dateien und Ordner hier hochladen</strong><span>Upload nach {location?.name||'diesem Speicherort'} · Ordnerstruktur bleibt erhalten</span></div>}
     <header className="paneTopbar"><div className="paneIdentity">{location?.kind==='unraid'?<Server size={16}/>:<HardDrive size={16}/>}<strong>{title}</strong></div><div className="pathbar"><button onClick={()=>setPath('/')} title="Alle Speicherorte" aria-label="Alle Speicherorte"><Home size={16}/></button><div className="crumbs"><button onClick={()=>setPath('/')}>Speicherorte</button>{location&&<span><ChevronRight size={14}/><button onClick={()=>setPath(location.virtualPath)}>{location.name}</button></span>}{relativeParts.map((part,index)=><span key={`${part}-${index}`}><ChevronRight size={14}/><button onClick={()=>setPath(`${location?.virtualPath}/${relativeParts.slice(0,index+1).join('/')}`)}>{part}</button></span>)}</div></div><div className="paneHeaderActions"><div className="paneViewToggle" role="group" aria-label={`Ansicht für ${title}`}><button className={viewMode==='list'?'active':''} aria-label={`${title} als Liste anzeigen`} aria-pressed={viewMode==='list'} onClick={()=>onViewModeChange('list')} title="Listenansicht"><List/></button><button className={viewMode==='grid'?'active':''} aria-label={`${title} als Kacheln anzeigen`} aria-pressed={viewMode==='grid'} onClick={()=>onViewModeChange('grid')} title="Kachelansicht"><LayoutGrid/></button></div><button className="paneRefresh" onClick={()=>void load()} title="Ordner aktualisieren" aria-label="Ordner aktualisieren"><RefreshCw size={16} className={loading?'spin':''}/></button></div></header>
     <div className={`paneSearch ${deepSearch?'deepActive':''}`}><div className="searchInputRow"><Search/><input aria-label={`${title} rekursiv durchsuchen`} value={query} onChange={event=>{setQuery(event.target.value);if(event.target.value)setDeepSearch(true)}} placeholder="Diesen Ordner und alle Unterordner durchsuchen"/>{searching&&<LoaderCircle className="spin"/>}{deepSearch&&<button onClick={clearDeepSearch} title="Suche schließen" aria-label="Suche schließen"><X/></button>}</div><div className="searchPresets" aria-label="Dateityp auswählen">{SEARCH_PRESETS.map(({kind,label,emoji})=>{const active=deepSearch&&searchKind===kind;return <button key={kind} className={active?'active':''} aria-pressed={active} title={active?`${label}-Filter ausschalten`:`${label}-Filter einschalten`} onClick={()=>{if(active){clearDeepSearch();return}setSearchKind(kind);setDeepSearch(true)}}><span className="presetEmoji" aria-hidden="true">{emoji}</span>{label}{active&&<X className="presetClose"/>}</button>})}</div></div>
     <div className="paneContent">{error?<div className="paneError" role="alert"><TriangleAlert size={32}/><strong>Zugriff nicht möglich</strong><span>{error}</span><button onClick={()=>void load()}>Erneut versuchen</button></div>:searchError?<div className="paneError" role="alert"><TriangleAlert size={32}/><strong>Suche nicht möglich</strong><span>{searchError}</span><button onClick={()=>setSearchRevision(value=>value+1)}>Erneut versuchen</button></div>:viewMode==='grid'?grid:table}{searching&&<div className="searchScanOverlay" role="status" aria-live="polite"><div className="searchScanCard"><div className="searchScanHead"><span>{searchDone?<CheckSquare2/>:<FolderSearch/>}</span><div><strong>{searchDone?'Suche abgeschlossen':searchProgress.phase==='preparing'?'Ordner werden erfasst':`${searchLabel} werden gesucht`}</strong><small>{searchProgress.phase==='preparing'?`${searchProgress.discovered} Elemente gefunden`:`${searchProgress.scanned} von ${searchProgress.total} Elementen geprüft`}</small></div><b>{searchProgress.phase==='preparing'?'…':`${searchProgress.percent}%`}</b></div><div className={`searchScanTrack ${searchProgress.phase==='preparing'?'preparing':''}`} role="progressbar" aria-label="Suchfortschritt" aria-valuemin={0} aria-valuemax={100} aria-valuenow={searchProgress.phase==='scanning'?searchProgress.percent:undefined}><i style={searchProgress.phase==='scanning'?{transform:`scaleX(${searchProgress.percent/100})`}:undefined}/></div><div className="searchScanStats"><span>{searchDone?<CheckSquare2/>:<LoaderCircle className="spin"/>}{searchDone?'Treffer werden angezeigt':searchProgress.phase==='preparing'?'Suche wird vorbereitet':'Unterordner werden durchsucht'}</span><span>{searchProgress.found} Treffer</span></div><small>{searchDone?'Fertig. Die gefundenen Dateien werden jetzt angezeigt.':'Aktiven Filter erneut anklicken, um abzubrechen.'}</small></div></div>}</div>

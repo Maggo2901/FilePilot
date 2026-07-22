@@ -81,11 +81,22 @@ try {
   const settings = await fetch(`${base}/settings`, {
     method: 'PUT',
     headers: {'content-type': 'application/json', authorization: `Bearer ${loginData.token}`},
-    body: JSON.stringify({settings: {favorites: ['/', '/@/manual-smoke/Fotos/Urlaub'], defaultLeftLocationId: 'favorite:/@/manual-smoke/Fotos/Urlaub', defaultRightLocationId: 'manual-external', manualLocations: [{id: 'manual-smoke', name: 'Smoke-Test', rootPath: fileRoot, readOnly: false, enabled: true}, {id: 'manual-external', name: 'Externer Test-Speicher', rootPath: externalRoot, readOnly: false, enabled: true}]}})
+    body: JSON.stringify({settings: {favorites: ['/', '/@/manual-smoke/Fotos/Urlaub'], rememberWorkspace: false, defaultLeftLocationId: 'favorite:/@/manual-smoke/Fotos/Urlaub', defaultRightLocationId: 'manual-external', manualLocations: [{id: 'manual-smoke', name: 'Smoke-Test', rootPath: fileRoot, readOnly: false, enabled: true}, {id: 'manual-external', name: 'Externer Test-Speicher', rootPath: externalRoot, readOnly: false, enabled: true}]}})
   });
   assert(settings.ok, 'Temporärer Such-Speicherort konnte nicht angelegt werden');
   const settingsData = await settings.json();
-  assert(settingsData.startPaths?.left === '/@/manual-smoke/Fotos/Urlaub' && settingsData.startPaths?.right === '/@/manual-external', 'Favorit oder Speicherort wurde nicht als Startansicht übernommen');
+  const folderUploadBody = new FormData();
+  folderUploadBody.append('files', new Blob(['nested upload']), 'upload.txt');
+  folderUploadBody.append('destination', '/@/manual-smoke');
+  folderUploadBody.append('relativePaths', JSON.stringify(['PC-Ordner/Unterordner/upload.txt']));
+  folderUploadBody.append('directories', JSON.stringify(['PC-Ordner', 'PC-Ordner/Unterordner', 'PC-Ordner/Leer']));
+  const folderUpload = await fetch(`${base}/upload`, {method: 'POST', headers: {authorization: `Bearer ${loginData.token}`}, body: folderUploadBody});
+  const folderUploadData = await folderUpload.json();
+  assert(folderUpload.ok && folderUploadData.files === 1 && folderUploadData.directories === 3, 'Ordner-Upload meldete keine vollständige Struktur');
+  const uploadedFolder = await fetch(`${base}/list?path=${encodeURIComponent('/@/manual-smoke/PC-Ordner/Unterordner')}`, {headers: {authorization: `Bearer ${loginData.token}`}}).then(response => response.json());
+  const emptyUploadedFolder = await fetch(`${base}/list?path=${encodeURIComponent('/@/manual-smoke/PC-Ordner/Leer')}`, {headers: {authorization: `Bearer ${loginData.token}`}}).then(response => response.json());
+  assert(uploadedFolder.items?.some(item => item.name === 'upload.txt') && Array.isArray(emptyUploadedFolder.items) && emptyUploadedFolder.items.length === 0, 'Ordner-Upload erhielt Datei- oder Leerordnerstruktur nicht');
+  assert(settingsData.startPaths?.left === '/@/manual-smoke/Fotos/Urlaub' && settingsData.startPaths?.right === '/@/manual-external' && settingsData.settings?.rememberWorkspace === false, 'Favorit, Speicherort oder Arbeitsbereich-Einstellung wurde nicht übernommen');
 
   const imageSearch = await fetch(`${base}/search?path=${encodeURIComponent('/@/manual-smoke')}&kind=images&scan=1`, {headers: {authorization: `Bearer ${loginData.token}`}});
   const imageData = await imageSearch.json();

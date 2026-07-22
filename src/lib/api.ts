@@ -41,6 +41,7 @@ export type AppSettings = {
   viewMode: 'list' | 'grid';
   accent: 'blue' | 'green' | 'purple' | 'orange';
   paneCount: 1 | 2 | 3 | 4;
+  rememberWorkspace: boolean;
   defaultLeftLocationId: string;
   defaultRightLocationId: string;
   disabledAutoLocationIds: string[];

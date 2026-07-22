@@ -58,8 +58,78 @@ type FileClipboard={paths:string[];mode:'copy'|'move'};
 type TransferStreamEvent={type:'preparing'|'start'|'progress'|'result'|'error';mode?:'copy'|'move';error?:string;loaded?:number;total?:number;completedFiles?:number;totalFiles?:number;current?:string;percent?:number;speed?:number;etaSeconds?:number};
 type DeleteStreamEvent={type:'preparing'|'start'|'progress'|'result'|'error';error?:string;loaded?:number;total?:number;completedFiles?:number;totalFiles?:number;current?:string;percent?:number;speed?:number;etaSeconds?:number;skipped?:number};
 type WorkspaceTab={id:string;path:string;selected:string[];viewMode:AppSettings['viewMode']};
+type UploadSelection={files:Array<{file:File;relativePath:string}>;directories:string[]};
+type DroppedEntry={name:string;isFile:boolean;isDirectory:boolean;file?:(success:(file:File)=>void,failure?:(error:DOMException)=>void)=>void;createReader?:()=>{readEntries:(success:(entries:DroppedEntry[])=>void,failure?:(error:DOMException)=>void)=>void}};
+type RememberedWorkspace={version:1;tabs:Array<{id:string;path:string;viewMode:AppSettings['viewMode']}>;visible:string[];active:string};
+
+const WORKSPACE_STORAGE_KEY='filepilot-workspace-v1';
 
 function workspaceTab(path:string,viewMode:AppSettings['viewMode']):WorkspaceTab{return{id:randomUUID(),path,selected:[],viewMode}}
+
+function rememberedWorkspace(bootstrap:Bootstrap):{tabs:WorkspaceTab[];visible:string[];active:string}|null{
+  if(!bootstrap.settings.rememberWorkspace)return null;
+  try{
+    const parsed=JSON.parse(localStorage.getItem(WORKSPACE_STORAGE_KEY)||'null') as Partial<RememberedWorkspace>|null;
+    if(parsed?.version!==1||!Array.isArray(parsed.tabs)||!parsed.tabs.length)return null;
+    const usablePath=(pathValue:string)=>{
+      if(pathValue==='/')return true;
+      const match=pathValue.match(/^\/@\/([^/]+)(?:\/|$)/);
+      const location=bootstrap.locations.find(item=>item.id===match?.[1]);
+      return Boolean(location?.enabled&&location.available);
+    };
+    const ids=new Set<string>();
+    const tabs=parsed.tabs.slice(0,20).map((stored,index)=>{
+      const fallback=index%2===0?bootstrap.startPaths.left:bootstrap.startPaths.right;
+      const storedId=typeof stored?.id==='string'&&stored.id.length<=100&&!ids.has(stored.id)?stored.id:randomUUID();
+      ids.add(storedId);
+      return{id:storedId,path:usablePath(String(stored?.path||''))?String(stored.path):fallback,selected:[],viewMode:stored?.viewMode==='grid'?'grid':'list'} as WorkspaceTab;
+    });
+    const count=Math.max(1,Math.min(4,bootstrap.settings.paneCount||2));
+    while(tabs.length<Math.max(2,count))tabs.push(workspaceTab(tabs.length%2===0?bootstrap.startPaths.left:bootstrap.startPaths.right,bootstrap.settings.viewMode));
+    const requestedVisible=Array.isArray(parsed.visible)?parsed.visible.map(String).filter(id=>tabs.some(tab=>tab.id===id)).slice(0,count):[];
+    const visible=[...requestedVisible];
+    for(const tab of tabs){if(visible.length>=count)break;if(!visible.includes(tab.id))visible.push(tab.id)}
+    const active=tabs.some(tab=>tab.id===parsed.active)?String(parsed.active):visible[0];
+    return{tabs,visible,active};
+  }catch{return null}
+}
+
+function uploadSelectionFromFiles(files:FileList|File[]):UploadSelection{
+  const directories=new Set<string>();
+  const selected=[...files].map(file=>{
+    const relativePath=(file as File&{webkitRelativePath?:string}).webkitRelativePath||file.name;
+    const parts=relativePath.replace(/\\/g,'/').split('/').filter(Boolean);
+    for(let length=1;length<parts.length;length+=1)directories.add(parts.slice(0,length).join('/'));
+    return{file,relativePath:parts.join('/')};
+  });
+  return{files:selected,directories:[...directories]};
+}
+
+async function droppedUploadSelection(dataTransfer:DataTransfer):Promise<UploadSelection>{
+  const roots=[...dataTransfer.items].map(item=>item.webkitGetAsEntry?.() as unknown as DroppedEntry|null).filter(Boolean) as DroppedEntry[];
+  if(!roots.length)return uploadSelectionFromFiles(dataTransfer.files);
+  const selection:UploadSelection={files:[],directories:[]};
+  const readFile=(entry:DroppedEntry)=>new Promise<File>((resolve,reject)=>{if(!entry.file){reject(new Error('Datei konnte nicht gelesen werden'));return}entry.file(resolve,reject)});
+  const readDirectory=async(entry:DroppedEntry)=>{
+    const reader=entry.createReader?.();
+    if(!reader)return[];
+    const output:DroppedEntry[]=[];
+    while(true){
+      const batch=await new Promise<DroppedEntry[]>((resolve,reject)=>reader.readEntries(resolve,reject));
+      if(!batch.length)return output;
+      output.push(...batch);
+    }
+  };
+  const walk=async(entry:DroppedEntry,parent:string):Promise<void>=>{
+    const relativePath=parent?`${parent}/${entry.name}`:entry.name;
+    if(entry.isFile){selection.files.push({file:await readFile(entry),relativePath});return}
+    if(!entry.isDirectory)return;
+    selection.directories.push(relativePath);
+    for(const child of await readDirectory(entry))await walk(child,relativePath);
+  };
+  for(const root of roots)await walk(root,'');
+  return selection;
+}
 
 async function streamedTransfer(paths:string[],destination:string,mode:'copy'|'move',onEvent:(event:TransferStreamEvent)=>void){
   const response=await fetch('/api/transfer-stream',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token()}`},body:JSON.stringify({paths,destination,mode})});
@@ -151,9 +221,13 @@ function favoriteLabel(pathValue:string,locations:Location[]){
 function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(value:Bootstrap)=>void}){
   const initialWorkspace=useRef<{tabs:WorkspaceTab[];visible:string[];active:string}|null>(null);
   if(!initialWorkspace.current){
-    const count=Math.max(1,Math.min(4,bootstrap.settings.paneCount||2));
-    const initialTabs=Array.from({length:Math.max(2,count)},(_,index)=>workspaceTab(index%2===0?bootstrap.startPaths.left:bootstrap.startPaths.right,bootstrap.settings.viewMode));
-    initialWorkspace.current={tabs:initialTabs,visible:initialTabs.slice(0,count).map(tab=>tab.id),active:initialTabs[0].id};
+    const restored=rememberedWorkspace(bootstrap);
+    if(restored)initialWorkspace.current=restored;
+    else{
+      const count=Math.max(1,Math.min(4,bootstrap.settings.paneCount||2));
+      const initialTabs=Array.from({length:Math.max(2,count)},(_,index)=>workspaceTab(index%2===0?bootstrap.startPaths.left:bootstrap.startPaths.right,bootstrap.settings.viewMode));
+      initialWorkspace.current={tabs:initialTabs,visible:initialTabs.slice(0,count).map(tab=>tab.id),active:initialTabs[0].id};
+    }
   }
   const[tabs,setTabs]=useState(initialWorkspace.current.tabs);
   const[activeTabId,setActiveTabId]=useState(initialWorkspace.current.active);
@@ -164,6 +238,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   const[page,setPage]=useState<'files'|'settings'|'trash'|'history'>('files');
   const paneHandles=useRef(new Map<string,PaneHandle>());
   const uploadInput=useRef<HTMLInputElement>(null);
+  const uploadFolderInput=useRef<HTMLInputElement>(null);
   const uploadDestinationRef=useRef<string|null>(null);
   const uploadRequests=useRef(new Map<string,XMLHttpRequest>());
   const uploadProgressAt=useRef(new Map<string,number>());
@@ -187,6 +262,15 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   const destination=destinationTab?.path||'/';
   const currentLocation=locationForPath(current,bootstrap.locations);
   const canWrite=current!=='/'&&!currentLocation?.readOnly;
+  const workspaceState=JSON.stringify({version:1,tabs:tabs.map(tab=>({id:tab.id,path:tab.path,viewMode:tab.viewMode})),visible:visibleTabIds,active:activeTabId} satisfies RememberedWorkspace);
+
+  useEffect(()=>{
+    if(!settings.rememberWorkspace){
+      try{localStorage.removeItem(WORKSPACE_STORAGE_KEY)}catch{/* storage unavailable */}
+      return;
+    }
+    try{localStorage.setItem(WORKSPACE_STORAGE_KEY,workspaceState)}catch{/* storage unavailable */}
+  },[workspaceState,settings.rememberWorkspace]);
 
   function updateTab(id:string,patch:Partial<Omit<WorkspaceTab,'id'>>){
     setTabs(currentTabs=>currentTabs.map(tab=>tab.id===id?{...tab,...patch}:tab));
@@ -299,11 +383,17 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
       const detail=(event as CustomEvent<{paths:string[];destination:string}>).detail;
       void transfer(dragMode,detail.paths,detail.destination);
     };
+    const uploadDropListener=(event:Event)=>{
+      const detail=(event as CustomEvent<{dataTransfer:DataTransfer;destination:string}>).detail;
+      void droppedUploadSelection(detail.dataTransfer).then(selection=>uploadSelection(selection,detail.destination)).catch(error=>notify(`Fehler: ${error?.message||'Ordner konnte nicht gelesen werden'}`));
+    };
     window.addEventListener('filepilot-preview',previewListener);
     window.addEventListener('filepilot-drop',dropListener);
+    window.addEventListener('filepilot-upload-drop',uploadDropListener);
     return()=>{
       window.removeEventListener('filepilot-preview',previewListener);
       window.removeEventListener('filepilot-drop',dropListener);
+      window.removeEventListener('filepilot-upload-drop',uploadDropListener);
     };
   },[activeTabId,tabs,visibleTabIds,dragMode,bootstrap.locations]);
 
@@ -313,18 +403,28 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
 
   function uploadFiles(files:FileList|null){
     if(!files?.length)return;
-    const uploadDestination=uploadDestinationRef.current||current;
+    uploadSelection(uploadSelectionFromFiles(files));
+  }
+
+  function uploadSelection(selection:UploadSelection,destinationOverride?:string){
+    if(!selection.files.length&&!selection.directories.length)return;
+    const uploadDestination=destinationOverride||uploadDestinationRef.current||current;
     uploadDestinationRef.current=null;
     const uploadLocation=locationForPath(uploadDestination,bootstrap.locations);
     if(uploadDestination==='/'||uploadLocation?.readOnly)return notify('Dieser Speicherort ist nicht beschreibbar');
-    const selectedFiles=[...files];
+    const selectedFiles=selection.files;
     const id=randomUUID();
-    const total=selectedFiles.reduce((sum,file)=>sum+file.size,0);
-    const name=selectedFiles.length===1?selectedFiles[0].name:`${selectedFiles[0].name} + ${selectedFiles.length-1} weitere`;
+    const total=selectedFiles.reduce((sum,item)=>sum+item.file.size,0);
+    const firstName=selectedFiles[0]?.relativePath.split('/')[0]||selection.directories[0]||'Ordner';
+    const rootFolder=selection.directories.find(directory=>!directory.includes('/'));
+    const name=rootFolder||(selectedFiles.length===1?firstName:`${firstName} + ${selectedFiles.length-1} weitere`);
     const form=new FormData();
-    selectedFiles.forEach(file=>form.append('files',file));
+    selectedFiles.forEach(item=>form.append('files',item.file,item.file.name));
     form.append('destination',uploadDestination);
-    const task:UploadTask={id,name,fileCount:selectedFiles.length,loaded:0,total,status:'uploading'};
+    form.append('relativePaths',JSON.stringify(selectedFiles.map(item=>item.relativePath)));
+    form.append('directories',JSON.stringify(selection.directories));
+    const startedAt=Date.now();
+    const task:UploadTask={id,name,fileCount:selectedFiles.length,folderCount:selection.directories.length,loaded:0,total,speed:0,etaSeconds:0,elapsedSeconds:0,status:'uploading'};
     setUploads(tasks=>[task,...tasks]);
 
     const request=new XMLHttpRequest();
@@ -336,15 +436,20 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
       const previous=uploadProgressAt.current.get(id)||0;
       if(now-previous<100&&event.loaded<event.total)return;
       uploadProgressAt.current.set(id,now);
-      updateUpload(id,{loaded:event.loaded,total:event.lengthComputable?event.total:total});
+      const fraction=event.lengthComputable&&event.total?Math.min(1,event.loaded/event.total):0;
+      const loaded=event.lengthComputable?total*fraction:Math.min(total,event.loaded);
+      const elapsedSeconds=Math.max(.001,(Date.now()-startedAt)/1000);
+      const speed=loaded/elapsedSeconds;
+      updateUpload(id,{loaded,speed,elapsedSeconds,etaSeconds:speed>0&&total>loaded?(total-loaded)/speed:0});
     };
+    request.upload.onload=()=>updateUpload(id,{loaded:total,etaSeconds:0,elapsedSeconds:(Date.now()-startedAt)/1000,status:'processing'});
     request.onload=()=>{
       uploadRequests.current.delete(id);
       uploadProgressAt.current.delete(id);
       if(request.status===401){localStorage.removeItem('filepilot-token');location.reload();return}
       if(request.status>=200&&request.status<300){
-        updateUpload(id,{loaded:total,total,status:'done'});
-        notify(`${selectedFiles.length} Datei(en) hochgeladen`);
+        updateUpload(id,{loaded:total,total,etaSeconds:0,elapsedSeconds:(Date.now()-startedAt)/1000,status:'done'});
+        notify(`${selectedFiles.length} Datei(en)${selection.directories.length?` und ${selection.directories.length} Ordner`:''} hochgeladen`);
         refresh();
         return;
       }
@@ -357,6 +462,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     request.onabort=()=>{uploadRequests.current.delete(id);updateUpload(id,{status:'cancelled'})};
     request.send(form);
     if(uploadInput.current)uploadInput.current.value='';
+    if(uploadFolderInput.current)uploadFolderInput.current.value='';
   }
 
   async function showInfo(pathValue=selected.length===1?selected[0]:''){
@@ -657,6 +763,8 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
         <button data-tone="amber" onClick={()=>createFolder()} disabled={!canWrite} title="Neuen Ordner im aktiven Bereich erstellen"><FolderPlus/>Neuer Ordner</button>
         <button data-tone="cyan" onClick={()=>{uploadDestinationRef.current=null;uploadInput.current?.click()}} disabled={!canWrite} title="Dateien vom Computer hochladen"><Upload/>Hochladen</button>
         <input ref={uploadInput} hidden multiple type="file" onChange={event=>void uploadFiles(event.target.files)}/>
+        <button data-tone="cyan" onClick={()=>{uploadDestinationRef.current=null;uploadFolderInput.current?.click()}} disabled={!canWrite} title="Einen kompletten Ordner vom Computer hochladen"><FolderOpen/>Ordner hochladen</button>
+        <input ref={element=>{uploadFolderInput.current=element;if(element)element.setAttribute('webkitdirectory','')}} hidden multiple type="file" onChange={event=>void uploadFiles(event.target.files)}/>
         <i/>
         <button data-tone="blue" onClick={()=>stageClipboard('copy')} disabled={!selected.length} title="Auswahl kopieren (Strg+C)"><Copy/>Kopieren</button>
         <button data-tone="violet" onClick={()=>stageClipboard('move')} disabled={!selected.length} title="Auswahl ausschneiden (Strg+X)"><Scissors/>Ausschneiden</button>

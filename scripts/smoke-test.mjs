@@ -108,6 +108,13 @@ try {
   assert(streamedSearch.ok && searchEvents.some(event => event.type === 'preparing') && searchEvents.some(event => event.type === 'start' && event.total > 0), 'Live-Suche lieferte keine Vorbereitungs- oder Startmeldung');
   assert(searchEvents.some(event => event.type === 'progress' && event.percent === 100) && searchEvents.some(event => event.type === 'result' && event.items?.length === 2), 'Live-Suche erreichte nicht 100 Prozent oder lieferte keine Treffer');
 
+  const collectionPaths=['/@/manual-smoke/Fotos/Urlaub/strand.jpg','/@/manual-smoke/Dokumente/Archiv/notes.txt'];
+  const collectionDownload=await fetch(`${base}/download?paths=${encodeURIComponent(JSON.stringify(collectionPaths))}&preservePaths=1`,{headers:{authorization:`Bearer ${loginData.token}`}});
+  const collectionZip=Buffer.from(await collectionDownload.arrayBuffer()).toString('latin1');
+  assert(collectionDownload.ok,`ZIP-Sammlung lieferte Status ${collectionDownload.status}: ${collectionZip.slice(0,300)}`);
+  assert(collectionDownload.headers.get('content-disposition')?.includes('FilePilot-Sammlung.zip'),`ZIP-Sammlung hatte einen unerwarteten Dateinamen: ${collectionDownload.headers.get('content-disposition')}`);
+  assert(collectionZip.includes('Smoke-Test/Fotos/Urlaub/strand.jpg')&&collectionZip.includes('Smoke-Test/Dokumente/Archiv/notes.txt'),'ZIP-Sammlung erhielt die Ordnerstruktur verschiedener Auswahlen nicht');
+
   const transferStream = await fetch(`${base}/transfer-stream`, {
     method: 'POST',
     headers: {'content-type': 'application/json', authorization: `Bearer ${loginData.token}`},
@@ -201,7 +208,7 @@ try {
   });
   assert(secondChange.ok, 'Atomarer zweiter Passwortwechsel fehlgeschlagen');
 
-  console.log('Smoke-Test bestanden: Health, Auth, Papierkorb, Wiederherstellung, endgültiges Löschen, Live-Suchfortschritt, Transferfortschritt, sichere speicherübergreifende Kopie, rekursive Bildersuche, sichere SVG-Vorschau, Medienmetadaten, Textvorschau, Fundpfade und Passwortwechsel');
+  console.log('Smoke-Test bestanden: Health, Auth, ZIP-Sammlung, Papierkorb, Wiederherstellung, endgültiges Löschen, Live-Suchfortschritt, Transferfortschritt, sichere speicherübergreifende Kopie, rekursive Bildersuche, sichere SVG-Vorschau, Medienmetadaten, Textvorschau, Fundpfade und Passwortwechsel');
 } finally {
   child.kill();
   await rm(appData, {recursive: true, force: true});

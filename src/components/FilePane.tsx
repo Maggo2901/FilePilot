@@ -3,7 +3,7 @@ import {CalendarClock,CheckSquare2,ChevronRight,FileText,FolderOpen,FolderSearch
 import {api,AppSettings,displayFileName,FileItem,formatSize,Location,token} from '../lib/api';
 import {FileEmoji} from './FileIcon';
 
-export type PaneHandle={refresh:()=>void};
+export type PaneHandle={refresh:()=>void;selectAll:()=>number;goBack:()=>boolean};
 
 type Props={
   title:string;
@@ -123,8 +123,6 @@ export function FilePane({title,path,setPath,selected,setSelected,viewMode,onVie
   }
 
   useEffect(()=>{setSearchItems(null);void load();return()=>{loadSequence.current+=1}},[path]);
-  useEffect(()=>{register({refresh:()=>{void load();setSearchRevision(value=>value+1)}})},[path]);
-
   useEffect(()=>{
     const sequence=++searchSequence.current;
     if(!deepSearch){
@@ -176,6 +174,12 @@ export function FilePane({title,path,setPath,selected,setSelected,viewMode,onVie
         :+new Date(a.modified)-+new Date(b.modified);
       return desc?-result:result;
     }),[sourceItems,settings.showHidden,settings.foldersFirst,query,sort,desc,deepSearch]);
+
+  useEffect(()=>{register({
+    refresh:()=>{void load();setSearchRevision(value=>value+1)},
+    selectAll:()=>{const paths=shown.map(item=>item.path);setSelected(paths);return paths.length},
+    goBack:()=>{if(path==='/')return false;setPath(parentPath(path));return true}
+  })},[path,shown]);
 
   const pathParts=path.split('/').filter(Boolean);
   const locationId=pathParts[1]||'';

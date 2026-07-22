@@ -1,5 +1,6 @@
 import {useEffect,useMemo,useRef,useState} from 'react';
 import {
+  Archive,
   ArrowDown,
   ArrowUp,
   CheckSquare2,
@@ -20,10 +21,12 @@ import {
   FolderOpen,
   FolderPlus,
   HardDrive,
+  HelpCircle,
   History,
   Info,
   LogOut,
   LoaderCircle,
+  ListPlus,
   Pencil,
   Plus,
   RefreshCw,
@@ -247,8 +250,11 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   const[transfers,setTransfers]=useState<TransferTask[]>([]);
   const[contextMenu,setContextMenu]=useState<ContextMenuState|null>(null);
   const[clipboard,setClipboard]=useState<FileClipboard|null>(null);
+  const[zipMode,setZipMode]=useState(false);
+  const[zipPaths,setZipPaths]=useState<string[]>([]);
   const[dragMode,setDragMode]=useState<'copy'|'move'>('copy');
   const[confirmOptions,setConfirmOptions]=useState<ConfirmOptions|null>(null);
+  const[helpOpen,setHelpOpen]=useState(false);
   const confirmResolve=useRef<((confirmed:boolean)=>void)|null>(null);
 
   const settings=bootstrap.settings;
@@ -499,15 +505,28 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     if(name)void run(()=>api('/rename',{method:'POST',body:JSON.stringify({path:pathValue,name})}),'Element umbenannt');
   }
 
-  function downloadSelected(paths=selected){
+  function downloadSelected(paths=selected,preservePaths=false){
     if(!paths.length)return notify('Bitte zuerst Dateien oder Ordner auswählen');
-    const url=`/api/download?paths=${encodeURIComponent(JSON.stringify(paths))}`;
+    const url=`/api/download?paths=${encodeURIComponent(JSON.stringify(paths))}${preservePaths?'&preservePaths=1':''}`;
     const anchor=document.createElement('a');
     anchor.href=url;
-    anchor.download=paths.length===1?(paths[0].split('/').pop()||'Download'):'FilePilot-Auswahl.zip';
+    anchor.download=preservePaths?'FilePilot-Sammlung.zip':paths.length===1?(paths[0].split('/').pop()||'Download'):'FilePilot-Auswahl.zip';
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
+  }
+
+  function addToZipCollection(paths=selected){
+    if(!paths.length)return notify('Bitte zuerst Dateien oder Ordner auswählen');
+    const usable=paths.filter(pathValue=>!/^\/@\/[^/]+\/?$/.test(pathValue));
+    const additions=usable.filter(pathValue=>!zipPaths.includes(pathValue));
+    if(!additions.length)return notify(usable.length?'Diese Auswahl ist bereits in der ZIP-Sammlung':'Komplette Speicherorte können nicht zur ZIP-Sammlung hinzugefügt werden');
+    setZipPaths(currentPaths=>[...currentPaths,...additions.filter(pathValue=>!currentPaths.includes(pathValue))]);
+    notify(`${additions.length} Element${additions.length===1?'':'e'} zur ZIP-Sammlung hinzugefügt`);
+  }
+
+  function removeFromZipCollection(pathValue:string){
+    setZipPaths(paths=>paths.filter(entry=>entry!==pathValue));
   }
 
   async function deleteSelected(paths=selected){
@@ -554,28 +573,46 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
   useEffect(()=>{
     const onKeyDown=(event:KeyboardEvent)=>{
       const target=event.target as HTMLElement|null;
-      if(event.key!=='Delete'||event.repeat||page!=='files'||!selected.length||confirmOptions||preview||info||contextMenu||target?.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target?.tagName||''))return;
+      if(event.key!=='Delete'||event.repeat||page!=='files'||!selected.length||confirmOptions||preview||info||helpOpen||contextMenu||target?.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target?.tagName||''))return;
       event.preventDefault();
       void deleteSelected([...selected]);
     };
     window.addEventListener('keydown',onKeyDown);
     return()=>window.removeEventListener('keydown',onKeyDown);
-  },[page,selected,confirmOptions,preview,info,contextMenu,settings.confirmDelete,settings.trashEnabled]);
+  },[page,selected,confirmOptions,preview,info,helpOpen,contextMenu,settings.confirmDelete,settings.trashEnabled]);
 
   useEffect(()=>{
     const onClipboardShortcut=(event:KeyboardEvent)=>{
-      if(!(event.ctrlKey||event.metaKey)||event.altKey||event.repeat||page!=='files'||confirmOptions||preview||info||contextMenu)return;
+      if(!(event.ctrlKey||event.metaKey)||event.altKey||event.repeat||page!=='files'||confirmOptions||preview||info||helpOpen||contextMenu)return;
       const target=event.target as HTMLElement|null;
       if(target?.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target?.tagName||''))return;
       const key=event.key.toLocaleLowerCase();
       if((key==='c'||key==='x')&&window.getSelection()?.toString())return;
+      if(key==='a'){
+        event.preventDefault();
+        const count=paneHandles.current.get(activeTabId)?.selectAll()||0;
+        notify(count?`${count} Element${count===1?'':'e'} ausgewählt`:'Keine sichtbaren Elemente zum Auswählen');
+        return;
+      }
       if(key==='c'&&selected.length){event.preventDefault();stageClipboard('copy',[...selected]);return}
       if(key==='x'&&selected.length){event.preventDefault();stageClipboard('move',[...selected]);return}
       if(key==='v'&&clipboard&&canWrite){event.preventDefault();void pasteClipboard(current)}
     };
     window.addEventListener('keydown',onClipboardShortcut);
     return()=>window.removeEventListener('keydown',onClipboardShortcut);
-  },[page,selected,clipboard,canWrite,current,confirmOptions,preview,info,contextMenu,bootstrap.locations,tabs,visibleTabIds]);
+  },[page,selected,clipboard,canWrite,current,activeTabId,confirmOptions,preview,info,helpOpen,contextMenu,bootstrap.locations,tabs,visibleTabIds]);
+
+  useEffect(()=>{
+    const onBackspace=(event:KeyboardEvent)=>{
+      const target=event.target as HTMLElement|null;
+      if(event.key!=='Backspace'||event.ctrlKey||event.metaKey||event.altKey||event.repeat||page!=='files'||confirmOptions||preview||info||helpOpen||contextMenu||target?.isContentEditable||['INPUT','TEXTAREA','SELECT'].includes(target?.tagName||''))return;
+      event.preventDefault();
+      const handle=paneHandles.current.get(activeTabId);
+      handle?.goBack();
+    };
+    window.addEventListener('keydown',onBackspace);
+    return()=>window.removeEventListener('keydown',onBackspace);
+  },[page,activeTabId,confirmOptions,preview,info,helpOpen,contextMenu]);
 
   function showContextMenu(event:React.MouseEvent,items:ContextMenuItem[],label:string){
     event.preventDefault();
@@ -686,6 +723,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     const folderWritable=item.type==='directory'&&!item.readOnly;
     showContextMenu(event,[
       {label:item.type==='directory'?'Ordner öffnen':'Vorschau öffnen',Icon:FolderOpen,action:()=>item.type==='directory'?setPanePath(tabId,item.path):setPreview(item),disabled:item.type==='symlink'},
+      ...(zipMode?[{label:'Zur ZIP-Sammlung hinzufügen',Icon:Archive,action:()=>addToZipCollection(paths),disabled:Boolean(item.locationRoot),separator:true}]:[]),
       {label:'In diesen Ordner einfügen',Icon:ClipboardPaste,action:()=>void pasteClipboard(item.path),disabled:!clipboard||!folderWritable,separator:true},
       {label:'Kopieren',Icon:Copy,action:()=>stageClipboard('copy',paths),disabled:Boolean(item.locationRoot)},
       {label:'Ausschneiden',Icon:Scissors,action:()=>stageClipboard('move',paths),disabled:locked},
@@ -743,7 +781,7 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     </aside>
 
     <main className={page==='settings'?'settingsMain':page==='trash'?'trashMain':page==='history'?'historyMain':''}>{page==='settings'?<SettingsPage bootstrap={bootstrap} onSaved={setBootstrap} notify={notify}/>:page==='trash'?<TrashPage notify={notify} confirmAction={confirmAction}/>:page==='history'?<HistoryPage notify={notify} confirmAction={confirmAction}/>:<>
-      <header className="top"><div><h1><Files/>Dateimanager</h1><p><HardDrive/>{platformText} · {activeLocations.length} Speicherort(e) erkannt</p></div><div className="topActions"><button className="ghost" onClick={()=>void toggleFavorite()}><FolderHeart/>{favoriteActive?'Favorit entfernen':'Als Favorit'}</button></div></header>
+      <header className="top"><div><h1><Files/>Dateimanager</h1><p><HardDrive/>{platformText} · {activeLocations.length} Speicherort(e) erkannt</p></div><div className="topActions"><button className="helpButton" onClick={()=>setHelpOpen(true)} title="Tastaturkürzel anzeigen" aria-label="Tastaturkürzel anzeigen"><HelpCircle/></button><button className="ghost" onClick={()=>void toggleFavorite()}><FolderHeart/>{favoriteActive?'Favorit entfernen':'Als Favorit'}</button></div></header>
 
       <div className="workspaceBar">
         <div className="workspaceTabs" role="tablist" aria-label="Geöffnete Datei-Tabs">{tabs.map(tab=>{const visible=visibleTabIds.includes(tab.id);return <div key={tab.id} className={`workspaceTab ${tab.id===activeTabId?'active':''} ${visible?'visible':''}`} onContextMenu={event=>tabContext(event,tab)}><button role="tab" aria-selected={tab.id===activeTabId} title={tab.path} onClick={()=>activateTab(tab.id)}><FolderOpen/><span>{favoriteLabel(tab.path,bootstrap.locations)}</span>{visible&&<small>{visibleTabIds.indexOf(tab.id)+1}</small>}</button><button className="tabClose" aria-label={`${favoriteLabel(tab.path,bootstrap.locations)} schließen`} title="Tab schließen" onClick={()=>closeTab(tab.id)} disabled={tabs.length===1}><X/></button></div>})}<button className="newTabButton" onClick={()=>openInNewTab()} title="Neuen Tab öffnen" aria-label="Neuen Tab öffnen"><Plus/></button></div>
@@ -760,6 +798,9 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
           <small title="Zwischen unterschiedlichen Speicherorten wird aus Sicherheitsgründen immer kopiert">Andere Speicher: immer Kopie</small>
         </div>
         <i/>
+        <button className={`zipModeButton ${zipMode?'active':''}`} data-tone="amber" aria-pressed={zipMode} onClick={()=>{setZipMode(active=>!active);notify(zipMode?'ZIP-Sammelmodus pausiert':'ZIP-Sammelmodus aktiviert')}} title="Dateien aus verschiedenen Ordnern für ein gemeinsames ZIP sammeln"><Archive/>ZIP sammeln{zipPaths.length>0&&<b>{zipPaths.length}</b>}</button>
+        {zipMode&&<button data-tone="amber" onClick={()=>addToZipCollection()} disabled={!selected.length} title="Aktuelle Auswahl zur ZIP-Sammlung hinzufügen"><ListPlus/>Auswahl hinzufügen</button>}
+        <i/>
         <button data-tone="amber" onClick={()=>createFolder()} disabled={!canWrite} title="Neuen Ordner im aktiven Bereich erstellen"><FolderPlus/>Neuer Ordner</button>
         <button data-tone="cyan" onClick={()=>{uploadDestinationRef.current=null;uploadInput.current?.click()}} disabled={!canWrite} title="Dateien vom Computer hochladen"><Upload/>Hochladen</button>
         <input ref={uploadInput} hidden multiple type="file" onChange={event=>void uploadFiles(event.target.files)}/>
@@ -770,13 +811,15 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
         <button data-tone="violet" onClick={()=>stageClipboard('move')} disabled={!selected.length} title="Auswahl ausschneiden (Strg+X)"><Scissors/>Ausschneiden</button>
         <button data-tone="green" onClick={()=>void pasteClipboard()} disabled={!clipboard||!canWrite} title="In den aktiven Ordner einfügen (Strg+V)"><ClipboardPaste/>Einfügen</button>
         <button data-tone="orange" onClick={()=>renameSelected()} disabled={selected.length!==1} title="Ausgewähltes Element umbenennen"><Pencil/>Umbenennen</button>
-        <button data-tone="green" onClick={()=>downloadSelected()} disabled={!selected.length} title="Auswahl herunterladen"><Download/>Download</button>
+        <button data-tone="green" onClick={()=>downloadSelected()} disabled={!selected.length} title={selected.length>1?'Markierte Elemente gemeinsam als ZIP herunterladen':'Auswahl herunterladen'}><Download/>{selected.length>1?'Als ZIP':'Download'}</button>
         <button data-tone="cyan" onClick={()=>void showInfo()} disabled={selected.length!==1} title="Eigenschaften anzeigen"><Info/>Info</button>
         <button className="danger" onClick={()=>deleteSelected()} disabled={!selected.length} title="Auswahl löschen"><Trash2/>Löschen</button>
         <i/>
         <button data-tone="violet" onClick={()=>{setSelected([]);notify('Auswahl aufgehoben')}} disabled={!selected.length} title="Auswahl aufheben"><CheckSquare2/>Auswahl aufheben</button>
         <button data-tone="cyan" onClick={refresh} title="Sichtbare Bereiche aktualisieren"><RefreshCw/>Aktualisieren</button>
       </div>
+
+      {(zipMode||zipPaths.length>0)&&<ZipCollection paths={zipPaths} active={zipMode} locations={bootstrap.locations} onAdd={()=>addToZipCollection()} canAdd={Boolean(selected.length)} onRemove={removeFromZipCollection} onClear={()=>{setZipPaths([]);notify('ZIP-Sammlung geleert')}} onDownload={()=>downloadSelected(zipPaths,true)}/>}
 
       <div className="panes modularPanes" style={{gridTemplateColumns:`repeat(${visibleTabs.length}, minmax(330px, 1fr))`}}>{visibleTabs.map((tab,index)=><div key={tab.id} data-pane-index={index} onMouseDown={()=>setActiveTabId(tab.id)} onFocusCapture={()=>setActiveTabId(tab.id)} className={tab.id===activeTabId?'activePane':''}><FilePane title={`Bereich ${index+1}`} path={tab.path} setPath={path=>updateTab(tab.id,{path,selected:[]})} selected={tab.selected} setSelected={value=>updateTab(tab.id,{selected:value})} viewMode={tab.viewMode} onViewModeChange={viewMode=>updateTab(tab.id,{viewMode})} register={handle=>paneHandles.current.set(tab.id,handle)} settings={settings} locations={bootstrap.locations} onError={notify} onContextMenu={(event,item)=>fileContext(event,item,tab.id)}/></div>)}</div>
     </>}</main>
@@ -787,7 +830,40 @@ function Explorer({bootstrap,setBootstrap}:{bootstrap:Bootstrap;setBootstrap:(va
     {contextMenu&&<ContextMenu menu={contextMenu} close={()=>setContextMenu(null)}/>}
     {preview&&<Modal wide close={()=>setPreview(null)}><h2>{preview.name}</h2><Preview item={preview}/></Modal>}
     {info&&<Modal wide close={()=>setInfo(null)}><InfoDetails info={info}/></Modal>}
+    {helpOpen&&<Modal close={()=>setHelpOpen(false)}><ShortcutHelp/></Modal>}
   </div>;
+}
+
+function readableVirtualPath(pathValue:string){
+  return pathValue.split('/').filter(Boolean).slice(2).map(part=>{try{return decodeURIComponent(part)}catch{return part}});
+}
+
+function ZipCollection({paths,active,locations,onAdd,canAdd,onRemove,onClear,onDownload}:{paths:string[];active:boolean;locations:Location[];onAdd:()=>void;canAdd:boolean;onRemove:(pathValue:string)=>void;onClear:()=>void;onDownload:()=>void}){
+  return <section className={`zipCollection ${active?'active':''}`} aria-label="ZIP-Sammlung"><header><span className="zipCollectionIcon"><Archive/></span><div><h2>ZIP-Sammlung <b>{paths.length}</b></h2><p>{active?'Sammelmodus aktiv · Wechsle durch Ordner und füge weitere Auswahlen hinzu.':'Sammelmodus pausiert · Deine bisherige Auswahl bleibt erhalten.'}</p></div><div className="zipCollectionActions"><button className="secondaryButton" onClick={onAdd} disabled={!canAdd}><ListPlus/>Aktuelle Auswahl</button><button className="secondaryButton" onClick={onClear} disabled={!paths.length}><Trash2/>Leeren</button><button className="primaryButton" onClick={onDownload} disabled={!paths.length}><Download/>Alles als ZIP</button></div></header>{paths.length?<div className="zipCollectionList">{paths.map(pathValue=>{const parts=readableVirtualPath(pathValue);const name=parts.pop()||'Element';const location=locationForPath(pathValue,locations);const parent=[location?.name,...parts].filter(Boolean).join(' / ');return <article key={pathValue}><Archive/><span><strong title={name}>{name}</strong><small title={parent}>{parent||'Speicherort'}</small></span><button onClick={()=>onRemove(pathValue)} title={`${name} aus der ZIP-Sammlung entfernen`} aria-label={`${name} aus der ZIP-Sammlung entfernen`}><X/></button></article>})}</div>:<div className="zipCollectionEmpty"><ListPlus/><span><strong>Noch nichts gesammelt</strong><small>Markiere Dateien oder Ordner und klicke auf „Auswahl hinzufügen“.</small></span></div>}</section>;
+}
+
+const SHORTCUT_GROUPS:ReadonlyArray<{title:string;items:ReadonlyArray<{keys:ReadonlyArray<string>;description:string;label?:string}>}>=[
+  {title:'Dateien auswählen und bearbeiten',items:[
+    {keys:['Strg','A'],description:'Alle sichtbaren Elemente im aktiven Bereich auswählen'},
+    {keys:['Strg','C'],description:'Auswahl kopieren'},
+    {keys:['Strg','X'],description:'Auswahl ausschneiden'},
+    {keys:['Strg','V'],description:'Im aktiven Ordner einfügen'},
+    {keys:['Entf'],description:'Auswahl in den Papierkorb verschieben oder löschen'}
+  ]},
+  {title:'Navigieren',items:[
+    {keys:['⌫'],label:'Rücktaste',description:'Im aktiven Bereich eine Ordnerebene zurückgehen'},
+    {keys:['Enter'],description:'Fokussierten Ordner öffnen oder Dateivorschau anzeigen'},
+    {keys:['Leertaste'],description:'Fokussiertes Element auswählen'},
+    {keys:['Esc'],description:'Geöffnetes Dialogfenster schließen'}
+  ]},
+  {title:'Mehrfachauswahl mit der Maus',items:[
+    {keys:['Strg','Klick'],description:'Einzelnes Element zur Auswahl hinzufügen oder entfernen'},
+    {keys:['Umschalt','Klick'],description:'Zusammenhängenden Bereich auswählen'}
+  ]}
+];
+
+function ShortcutHelp(){
+  return <div className="shortcutHelp"><header><span><HelpCircle/></span><div><h2>Tastaturkürzel</h2><p>Die Befehle gelten für den zuletzt aktiven Dateibereich.</p></div></header><div className="shortcutGroups">{SHORTCUT_GROUPS.map(group=><section key={group.title}><h3>{group.title}</h3><div>{group.items.map(item=><div className="shortcutRow" key={`${group.title}-${item.description}`}><span className="shortcutKeys" aria-label={'Tasten: '+(item.label||item.keys.join(' plus '))}>{item.keys.map((key,index)=><span key={`${key}-${index}`}>{index>0&&<i>+</i>}<kbd>{key}</kbd></span>)}{item.label&&<small>{item.label}</small>}</span><p>{item.description}</p></div>)}</div></section>)}</div><footer><span>Hinweis</span><p>In Such- und Eingabefeldern behalten die Tasten ihre normale Funktion.</p></footer></div>;
 }
 
 function formatDuration(value:unknown){

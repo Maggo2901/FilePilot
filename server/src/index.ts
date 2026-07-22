@@ -6,11 +6,11 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import multer from 'multer';
+import { ZipArchive } from 'archiver';
 import { createRequire } from 'node:module';
 import mime from 'mime-types';
 
 const require = createRequire(import.meta.url);
-const archiver: any = require('archiver');
 const ffprobePath = require('@derhuerst/ffprobe-static') as string | null;
 
 type ProbeStream = Record<string, any>;
@@ -1491,16 +1491,20 @@ app.get('/api/download', async (req, res, next) => {
     if (!Array.isArray(virtualPaths) || !virtualPaths.length) throw new Error('Keine Dateien ausgewählt');
     const resolved = await Promise.all(virtualPaths.map(item => resolveVirtual(String(item))));
     for (const item of resolved) assertNotLocationRoot(item);
-    await recordHistory({action:'download',status:'success',title:'Auswahl heruntergeladen',detail:`${resolved.length} Element(e)`,count:resolved.length,paths:virtualPaths,sourcePaths:virtualPaths,destination:'Browser-Download'});
+    const preservePaths = String(req.query.preservePaths || '') === '1';
+    await recordHistory({action:'download',status:'success',title:preservePaths?'ZIP-Sammlung heruntergeladen':'Auswahl heruntergeladen',detail:`${resolved.length} Element(e)`,count:resolved.length,paths:virtualPaths,sourcePaths:virtualPaths,destination:'Browser-Download'});
 
-    if (resolved.length === 1 && (await fs.stat(resolved[0].fullPath)).isFile()) return res.download(resolved[0].fullPath);
-    res.attachment('FilePilot-Auswahl.zip');
-    const zip = archiver('zip', { zlib: { level: 6 } });
+    if (!preservePaths && resolved.length === 1 && (await fs.stat(resolved[0].fullPath)).isFile()) return res.download(resolved[0].fullPath);
+    res.attachment(preservePaths?'FilePilot-Sammlung.zip':'FilePilot-Auswahl.zip');
+    const zip = new ZipArchive({ zlib: { level: 6 } });
     zip.on('error', next);
     zip.pipe(res);
     for (const item of resolved) {
       const stat = await fs.stat(item.fullPath);
-      stat.isDirectory() ? zip.directory(item.fullPath, path.basename(item.fullPath)) : zip.file(item.fullPath, { name: path.basename(item.fullPath) });
+      const locationName=item.location.name.replace(/[<>:"/\\|?*\u0000-\u001f]/g,'_').trim().replace(/[. ]+$/,'')||item.location.id;
+      const relativePath=path.relative(item.location.rootPath,item.fullPath).split(path.sep).filter(Boolean).join('/');
+      const archivePath=preservePaths?`${locationName}/${relativePath}`:path.basename(item.fullPath);
+      stat.isDirectory() ? zip.directory(item.fullPath, archivePath) : zip.file(item.fullPath, { name: archivePath });
     }
     await zip.finalize();
   } catch (error) {
